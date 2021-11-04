@@ -11,6 +11,8 @@ from copy import copy
 
 Param_Dict = {'torso':1.0,'up':0.3,'feet':0.2,'tau':0.1,'done':1,'velx':0,'badfoot':0.1,'footcontact':0.1}
 Random_Param_Dict = {'random_dynamics':0,'random_force':0}
+
+# call in A1GymEnv.init(), behind "build_regular_env()"
 def EnvWrapper(env,param,sensor_mode,normal=0,ETG_T=0.5,enable_action_filter=False,
                 reward_p=1,ETG=1,ETG_path="",ETG_T2=0.5,random_param=None,
                 ETG_H=20,act_mode="traj",vel_d=0.6,vel_mode="max",
@@ -269,8 +271,11 @@ class ETGWrapper(gym.Wrapper):
     
     def step(self,action,**kwargs):
         if self.ETG:
-            action = np.asarray(action).reshape(-1)+self.last_ETG_act
+            # residual_act(input) + ETG_act
+            action = np.asarray(action).reshape(-1) + self.last_ETG_act
+            # CPG-RBF, the output of the hidden neuron: V(t), [tuple:2(20x1)]
             state = self.ETG_agent.update2(t=self.env.get_time_since_reset())
+            # P(t) = W ∗ V(t) + b, W:[3x20], b:[3x1] The phase difference of TG is T/2.
             act_ref = self.ETG_model.forward(self.ETG_w,self.ETG_b,state)
             action_before = act_ref
             act_ref = self.ETG_model.act_clip(act_ref,self.robot)

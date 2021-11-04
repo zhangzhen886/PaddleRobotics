@@ -12,7 +12,7 @@ class ETG_layer():
         self.T = T
         self.t = 0
         self.H = H
-        self.sigma_sq = sigma_sq
+        self.sigma_sq = sigma_sq  # variance:0.04
         self.phase = phase
         self.amp = amp
         self.u = []
@@ -41,22 +41,23 @@ class ETG_layer():
         r = np.asarray(r).reshape(-1)
         return r
 
-    def update2(self,t=None,info=None):
-        time = t if t is not None else self.t
-        x = self.forward(time)
-        x2 = self.forward(time+self.T2_ratio*self.T)
+    def update2(self,t=None,info=None):  # calculate V(t)
+        time = t if t is not None else self.t  # step: 0.002*repeat_num
+        # CPG-RBF network structure
+        x = self.forward(time) # a*sin[phi+omega(t)]
+        x2 = self.forward(time+self.T2_ratio*self.T) # a*sin[phi+omega(t+B)]
         self.t += self.dt
         r = []
-        for i in range(self.H):
-            dist = np.sum(np.power(x-self.u[i],2))/self.sigma_sq
+        for i in range(self.H): # H=20, the number of neurons
+            dist = np.sum(np.power(x-self.u[i],2))/self.sigma_sq  # sigma_sq: the variance between neuron outputs
             r.append(np.exp(-dist))
-        r = np.asarray(r).reshape(-1)
+        r = np.asarray(r).reshape(-1) # [20x1]
         r2 = []
         for i in range(self.H):
             dist = np.sum(np.power(x2-self.u[i],2))/self.sigma_sq
             r2.append(np.exp(-dist))
-        r2 = np.asarray(r2).reshape(-1)
-        return (r,r2)
+        r2 = np.asarray(r2).reshape(-1) # [20x1]
+        return (r,r2)  # [2x20]
     def observation_T(self):
         ts = np.arange(0,self.T,self.dt)
         x = {t:self.forward(t) for t in ts}
@@ -93,8 +94,8 @@ class ETG_model():
             self.base_foot[7] = -step_y
             self.base_foot[10] = step_y
     def forward(self,w,b,x):
-        x1 = np.asarray(x[0]).reshape(-1,1)
-        x2 = np.asarray(x[1]).reshape(-1,1)
+        x1 = np.asarray(x[0]).reshape(-1,1) # 20x1
+        x2 = np.asarray(x[1]).reshape(-1,1) # 20x1
         act1 = w.dot(x1).reshape(-1)+b
         act2 = w.dot(x2).reshape(-1)+b
         new_act = np.zeros(ACTION_DIM)

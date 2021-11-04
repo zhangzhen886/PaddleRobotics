@@ -30,6 +30,13 @@ import pybullet as p
 import cv2
 import time
 from alg.es import SimpleGA
+from matplotlib import pyplot as plt
+
+import rospy
+from sensor_msgs.msg import JointState
+
+rospy.init_node("etg_node")
+pub_joint = rospy.Publisher("joint_states", JointState, queue_size=100)
 
 WARMUP_STEPS = 1e4
 EVAL_EVERY_STEPS = 1e4
@@ -56,8 +63,22 @@ mode_map ={"pose":robot_config.MotorControlMode.POSITION,
             "torque":robot_config.MotorControlMode.TORQUE,
             "traj":robot_config.MotorControlMode.POSITION,}
 
+def plot_gait(w,b,ETG,points):
+    plt.scatter(points[:, 0], points[:, 1], c='r', alpha=0.5)
+    t_t = np.arange(0, 0.51, 0.01)
+    p = []
+    for t in np.nditer(t_t):
+        p.append(w.dot(ETG.update(t))+b)
+    p = np.array(p)
+    colors = t_t * 200
+    plt.scatter(p[:,0], p[:,1], s=10, c=colors, cmap='viridis')
+    plt.xlim(-0.1, 0.1)
+    plt.ylim(-0.05, 0.15)
+    # plt.colorbar()
+    plt.show()
+
 def LS_sol(A,b,precision=1e-4,alpha=0.05,lamb=1,w0=None):
-    n,m = A.shape
+    n,m = A.shape #20x6
     if w0 is not None:
         x = copy(w0)
     else:
@@ -84,29 +105,30 @@ def Opt_with_points(ETG,ETG_T=0.4,points=None,b0=None,w0=None,precision=1e-4,lam
         Steplength = kwargs["Steplength"] if "Steplength" in kwargs else 0.05
         Footheight = kwargs["Footheight"] if "Footheight" in kwargs else 0.08
         Penetration = kwargs["Penetration"] if "Penetration" in kwargs else 0.01
+        # [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
         points = np.array([[0,-Penetration],[-Steplength,-Penetration*0.5],[-Steplength*1.5,0.6*Footheight],[0,Footheight],
                     [Steplength*1.5,0.6*Footheight],[Steplength,-Penetration*0.5]])
     obs = []
     for t in ts:
-        v = ETG.update(t)
+        v = ETG.update(t)  # calculate V(t), 20 dim
         obs.append(v)
-    obs = np.array(obs).reshape(-1,20)
+    obs = np.array(obs).reshape(-1,20) #6x20
     if b0 is None:
         b = np.mean(points,axis=0)
     else:
-        b = np.array([b0[0],b0[-1]])
-    points_t = points-b
+        b = np.array([b0[0],b0[-1]]) #2x1
+    points_t = points-b #6x2
     if w0 is None:
-        x1 = LS_sol(A=obs,b=points_t[:,0].reshape(-1,1),precision=precision,alpha=0.05)
-        x2 = LS_sol(A=obs,b=points_t[:,1].reshape(-1,1),precision=precision,alpha=0.05)
+        x1 = LS_sol(A=obs,b=points_t[:,0].reshape(-1,1),precision=precision,alpha=0.05) #20x1
+        x2 = LS_sol(A=obs,b=points_t[:,1].reshape(-1,1),precision=precision,alpha=0.05) #20x1
     else:
         x1 = LS_sol(A=obs,b=points_t[:,0].reshape(-1,1),precision=precision,alpha=0.05,lamb=lamb,w0=w0[0,:].reshape(-1,1))
         x2 = LS_sol(A=obs,b=points_t[:,1].reshape(-1,1),precision=precision,alpha=0.05,lamb=lamb,w0=w0[-1,:].reshape(-1,1))
-    w = np.stack((x1,x2),axis=0).reshape(2,-1)
+    w = np.stack((x1,x2),axis=0).reshape(2,-1) #2x20
     # if plot:
-    #     plot_gait(w,b,ETG,points)
-    w_ = np.stack((x1,np.zeros((20,1)),x2),axis=0).reshape(3,-1)
-    b_ = np.array([b[0],0,b[1]])
+    plot_gait(w,b,ETG,points)
+    w_ = np.stack((x1,np.zeros((20,1)),x2),axis=0).reshape(3,-1) #3x20
+    b_ = np.array([b[0],0,b[1]]) #3x1
     return w_,b_,points
  
 def param2dynamic_dict(params):
@@ -137,13 +159,15 @@ def run_train_episode(agent, env, rpm,max_step,action_bound,w=None,b=None):
     actor_loss_list = [] 
     while not done:
         episode_steps += 1
-        # Select action randomly or according to policy
+        # Select action randomly or according to policy, WARMUP_STEPS==1e4
         if rpm.size() < WARMUP_STEPS:
             action = np.random.uniform(-1, 1, size=action_dim)
         else:
             action = agent.sample(obs)
+        # action = np.zeros(action_dim)
         new_action = copy(action)
         # Perform action
+        # action_bound: [0.3,0.3,0.3] * 4
         next_obs, reward, done, info = env.step(new_action*action_bound,donef=(episode_steps>max_step))
         terminal = float(done) if episode_steps < 2000 else 0
         terminal = 1. - terminal
@@ -183,22 +207,47 @@ def run_evaluate_episodes(agent, env,max_step,action_bound,w=None,b=None):
     avg_reward = 0.
     infos = {}
     steps_all = 0
+    # w = None
+    # b = None
     obs,info = env.reset(ETG_w=w,ETG_b=b,x_noise=args.x_noise)
     done = False
     steps = 0
-    while not done:
+    while True:
         steps +=1
-        if args.eval:
-            t0 = time.clock()
+        t0 = time.clock()
         action = agent.predict(obs)
+        t1 = time.clock() - t0
         new_action = action
+        # new_action = np.zeros(12)
         obs, reward, done, info = env.step(new_action*action_bound,donef=(steps>max_step))
-        if args.eval == 1:
-            img=p.getCameraImage(640, 480, renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB ) 
-            cv2.imwrite("img/img{}.jpg".format(steps),img)
-            # print("t:",time.clock()-t0)
+        # if args.eval == 1:
+            # img=p.getCameraImage(640, 480, renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
+            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB )
+            # cv2.imwrite("img/img{}.jpg".format(steps),img)
+            # print("pred time:", t1)
         avg_reward += reward
+        t2 = time.clock() - t0
+        # print("step time:", t2)
+        joint_msg = JointState()
+        joint_msg.name.append("torso_to_abduct_fr_j")
+        joint_msg.name.append("abduct_fr_to_thigh_fr_j")
+        joint_msg.name.append("thigh_fr_to_knee_fr_j")
+        joint_msg.name.append("torso_to_abduct_fl_j")
+        joint_msg.name.append("abduct_fl_to_thigh_fl_j")
+        joint_msg.name.append("thigh_fl_to_knee_fl_j")
+        joint_msg.name.append("torso_to_abduct_hr_j")
+        joint_msg.name.append("abduct_hr_to_thigh_hr_j")
+        joint_msg.name.append("thigh_hr_to_knee_hr_j")
+        joint_msg.name.append("torso_to_abduct_hl_j")
+        joint_msg.name.append("abduct_hl_to_thigh_hl_j")
+        joint_msg.name.append("thigh_hl_to_knee_hl_j")
+        for i in range(0, 12):
+            joint_msg.position.append(info['real_action'][i])
+        for i in range(0, 12):
+            joint_msg.position.append((info['ETG_act']+info['init_act'])[i])
+        joint_msg.header.stamp = rospy.Time.now()
+        joint_msg.header.frame_id = "robot"
+        pub_joint.publish(joint_msg)
         for key in Param_Dict.keys():
             if key in info.keys():
                 if key not in infos.keys():
@@ -222,6 +271,7 @@ def run_EStrain_episode(agent, env, rpm,max_step,action_bound,w=None,b=None):
     while not done:
         episode_steps += 1
         # Select action randomly or according to policy
+        # use RL policy(SAC) to generate action residual?
         action = agent.predict(obs)
         new_action = copy(action)
         # Perform action
@@ -275,8 +325,10 @@ def main():
     rnn_config["time_interval"] = args.timeinterval
     rnn_config["mode"] = args.RNN_mode
     sensor_mode["RNN"] = rnn_config
-    render = True if (args.eval or args.render) else False
+    # render = True if (args.eval or args.render) else False
+    render = args.render
     mode = mode_map[args.act_mode]
+
     ##ES init
     if os.path.exists(args.ETG_path):
         ETG_info = np.load(args.ETG_path)
@@ -293,10 +345,12 @@ def main():
                 weight_decay=0.005,
                 popsize=args.popsize,
                 param = ETG_param_init)
+    # ETG init
     phase = np.array([-np.pi/2,0])
     ETG_agent = ETG_layer(args.ETG_T,0.026,args.ETG_H,0.04,phase,0.2,args.ETG_T2)
-    w0,b0,prior_points = Opt_with_points(ETG=ETG_agent,ETG_T=args.ETG_T,
-                                            Footheight=args.footheight,Steplength=args.steplen)
+    w0,b0,prior_points = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T,
+                                         Footheight=args.footheight, Steplength=args.steplen)
+    # plt.plot(prior_points[:, 0], prior_points[:, -1], "or")
     if not os.path.exists(args.ETG_path):
         np.savez(args.ETG_path,w=w0,b=b0,param=prior_points)
     dynamic_param = np.load("data/sigma0.5_exp0_dynamic_param9027.npy")
@@ -317,11 +371,10 @@ def main():
     elif args.act_mode == "torque":
         act_bound = np.array([10]*12)
     elif args.act_mode == "traj":
-        act_bound = np.array([act_bound_now,act_bound_now,act_bound_now]*4)
+        act_bound = np.array([act_bound_now,act_bound_now,act_bound_now]*4)  # 0.3*12
+
     # Initialize model, algorithm, agent, replay_memory
     model = MujocoModel(obs_dim, action_dim)
-    rpm = ReplayMemory(
-    max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
     algorithm = SAC(
         model,
         gamma=GAMMA,
@@ -332,8 +385,12 @@ def main():
     agent = MujocoAgent(algorithm)
     if len(args.load)>0:
         agent.restore(args.load)
+    rpm = ReplayMemory(max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
+
+    # training mode
     if not args.eval:
-        outdir = os.path.join(args.outdir,args.suffix)
+        suffix = args.suffix + '_' + args.task_mode
+        outdir = os.path.join(args.outdir, suffix)
         if not os.path.exists(args.outdir):
             os.makedirs(args.outdir)
         if not os.path.exists(outdir):
@@ -345,9 +402,10 @@ def main():
         ES_test_flag = 0
         t_steps = 0
 
-        #init w,b
+        # init w,b
         ETG_best_param = ES_solver.get_best_param()
         points_add = ETG_best_param.copy().reshape(-1,2)
+        # prior_points: 6x2 [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
         new_points = prior_points+points_add
         w,b,_ = Opt_with_points(ETG=ETG_agent,ETG_T=args.ETG_T,w0=w0,b0=b0,points=new_points)
         ES_step = 0
@@ -364,15 +422,16 @@ def main():
                 if info[key] != 0:
                     summary.add_scalar('train/episode_{}'.format(key),info[key],total_steps)
                     summary.add_scalar('train/mean_{}'.format(key),info[key]/episode_step,total_steps)   
-            logger.info('Total Steps: {} Reward: {}'.format(
+            logger.info('[Training] Total Steps: {} Reward: {}'.format(
                 total_steps, episode_reward))
-            # Evaluate episode
+
+            # Evaluate episode, EVAL_EVERY_STEPS=10000
             if (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
                 while (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
                     test_flag += 1
                     avg_reward,avg_step,info = run_evaluate_episodes(agent, env,600,act_bound,w,b)
-                    logger.info('Evaluation over: {} episodes, Reward: {} Steps: {} '.format(
-                    EVAL_EPISODES, avg_reward,avg_step))
+                    logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
+                        EVAL_EPISODES, avg_reward, avg_step))
                     summary.add_scalar('eval/episode_reward', avg_reward,
                                         total_steps)
                     summary.add_scalar('eval/episode_step', avg_step,
@@ -387,14 +446,15 @@ def main():
                 # if not os.path.exists(path):
                 #     os.mkdir(path)
                 agent.save(path) 
-                np.savez(os.path.join(outdir,'itr_{:d}.npz'.format(int(total_steps))),w=w,b=b,param=ETG_best_param)    
-    
+                np.savez(os.path.join(outdir,'itr_{:d}.npz'.format(int(total_steps))),w=w,b=b,param=ETG_best_param)
+
+            # ES episode, ES_EVERY_STEPS=50000, WARMUP_STEPS=10000
             if args.ES and (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag and total_steps >= WARMUP_STEPS:
                 while (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag:
                     ES_test_flag += 1
                     best_reward,avg_step,info = run_EStrain_episode(agent, env,rpm,400,act_bound,w,b)
                     best_param = ETG_best_param.copy().reshape(-1)
-                    for ei in range(ES_TRAIN_STEPS):
+                    for ei in range(ES_TRAIN_STEPS):  # ES_TRAIN_STEPS=10
                         solutions = ES_solver.ask()
                         fitness_list = []
                         steps = []
@@ -403,9 +463,15 @@ def main():
                             infos[key] = 0
                         for solution in solutions:
                             points_add = solution.reshape(-1,2)
-                            new_points = prior_points+points_add
+                            new_points = prior_points + points_add
+                            # if args.suffix is 'debug':
+                                # plt.plot(prior_points[:, 0], prior_points[:, -1], "or")
+                                # plt.plot(new_points[:, 0], new_points[:, -1], "ob")
+                                # plt.xlim(-0.1, 0.1)
+                                # plt.ylim(-0.05, 0.15)
+                                # plt.show()
                             w,b,_ = Opt_with_points(ETG=ETG_agent,ETG_T=args.ETG_T,w0=w0,b0=b0,points=new_points)
-                            episode_reward, episode_step,info = run_EStrain_episode(agent, env, rpm,400,act_bound,w,b)
+                            episode_reward, episode_step, info = run_EStrain_episode(agent, env, rpm,400,act_bound,w,b)
                             fitness_list.append(episode_reward)
                             steps.append(episode_step)
                             for key in infos.keys():
@@ -415,11 +481,12 @@ def main():
                         if fitness_list[max_index]>best_reward:
                             best_param = solutions[max_index]
                             best_reward = fitness_list[max_index]
+                        # reward table
                         ES_solver.tell(fitness_list)
                         results = ES_solver.result()
                         ES_step += 1
                         sig = np.mean(results[3])
-                        logger.info('ESSteps: {} Reward: {} step: {}  sigma:{}'.format(ES_step, np.max(fitness_list),np.mean(steps),sig))
+                        logger.info('[ESSteps: {}] Reward: {} step: {}  sigma:{}'.format(ES_step, np.max(fitness_list),np.mean(steps),sig))
                         summary.add_scalar('ES/sigma', sig, ES_step)
                         summary.add_scalar('ES/episode_reward', np.mean(fitness_list), ES_step)
                         summary.add_scalar('ES/episode_minre', np.min(fitness_list), ES_step)
@@ -442,9 +509,9 @@ def main():
         outdir = os.path.join(args.load[:-3],args.task_mode)
         if not os.path.exists(args.load[:-3]):
             os.makedirs(args.load[:-3])
-        avg_reward,avg_step,info = run_evaluate_episodes(agent, env,600,act_bound,w,b)
-        os.system("ffmpeg -r 38 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
-        os.system("rm -rf img/*")
+        avg_reward,avg_step,info = run_evaluate_episodes(agent, env,1500,act_bound,w,b)
+        # os.system("ffmpeg -r 38 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
+        # os.system("rm -rf img/*")
         logger.info('Evaluation over: {} episodes, Reward: {} Steps: {}'.format(
                     EVAL_EPISODES, avg_reward,avg_step))
 

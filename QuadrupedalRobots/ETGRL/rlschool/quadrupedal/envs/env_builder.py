@@ -23,6 +23,7 @@ from rlschool.quadrupedal.envs.env_wrappers.gait_generator_env import GaitGenera
 
 SENSOR_MODE = {"dis":1,"motor":1,"imu":1,"contact":1,"footpose":0,"ETG":0}
 
+# call in A1GymEnv.init()
 def build_regular_env(robot_class,
                       motor_control_mode,
                       param,
@@ -42,7 +43,7 @@ def build_regular_env(robot_class,
   sim_params.enable_rendering = enable_rendering
   sim_params.motor_control_mode = motor_control_mode
   sim_params.reset_time = 2
-  sim_params.num_action_repeat = 13
+  sim_params.num_action_repeat = 5
   sim_params.enable_action_interpolation = False
   if filter:
     sim_params.enable_action_filter = True
@@ -50,7 +51,7 @@ def build_regular_env(robot_class,
     sim_params.enable_action_filter = False
   sim_params.enable_clip_motor_commands = False
   sim_params.robot_on_rack = on_rack
-  dt = sim_params.num_action_repeat*sim_params.sim_time_step_s
+  dt = sim_params.num_action_repeat*sim_params.sim_time_step_s  # 13 * 0.002 = 0.026
 
 #   sim_params.sim_time_step_s = 1./500.
 
