@@ -60,6 +60,7 @@ class A1GymEnv(gym.Env):
         sensor_mode = sensor_mode,
         normal = normal,
         ETG_T = ETG_T,
+        ETG_H = ETG_H,
         ETG_path = ETG_path,
         ETG = ETG,
         random_param = random_param,

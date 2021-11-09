@@ -4,6 +4,7 @@
 # https://github.com/google-research/motion_imitation
 """This file implements the locomotion gym env."""
 import collections
+import random as rd
 import time
 import gym
 from gym import spaces
@@ -93,6 +94,7 @@ class LocomotionGymEnv(gym.Env):
     self._task = task
     self.height_field = 0
     self.task_mode = task_mode 
+    self.terrain_dict = {1:upstair_downslope, 2:upslope_downstair, 3:upstair_downstair, 4:upslope_downslope}
 
     if task_mode == "heightfield":
       self.height_field = 1
@@ -151,6 +153,8 @@ class LocomotionGymEnv(gym.Env):
     self.reset()
 
     self._hard_reset = gym_config.simulation_parameters.enable_hard_reset
+    if self.task_mode is "random":
+      self._hard_reset = True
 
     # Construct the observation space from the list of sensors. Note that we
     # will reconstruct the observation_space after the robot is created.
@@ -256,6 +260,12 @@ class LocomotionGymEnv(gym.Env):
       }
 
       self._pybullet_client.changeDynamics(self._world_dict['ground'],-1,lateralFriction=5)
+
+      # cs = pybullet.createCollisionShape(pybullet.GEOM_BOX,halfExtents=[0.1,0.06,0.4])
+      # id = pybullet.createMultiBody(baseMass=0, baseCollisionShapeIndex=cs,
+      #                               basePosition=[0,0,0])
+      # pybullet.changeDynamics(id, -1, lateralFriction=5.0)
+
       # Rebuild the robot
       self._robot = self._robot_class(
           pybullet_client=self._pybullet_client,
@@ -323,6 +333,9 @@ class LocomotionGymEnv(gym.Env):
         self.add_height,self.env_info = upstair_terrain(stepwidth=0.05,stepheight=6,mode="balance_beam")
       elif self.task_mode == "highstair":
         self.add_height,self.env_info = upstair_terrain(stepwidth=0.4,stepheight=0.13,mode="stair-fix")
+    if self.task_mode == "random":
+      random_env = self.terrain_dict[rd.randint(1,4)]
+      self.add_height, self.env_info = upstair_terrain(mode="special", env_vecs=random_env)
 
     if "yaw" in kwargs.keys():
       yaw = kwargs["yaw"]
@@ -485,16 +498,17 @@ class LocomotionGymEnv(gym.Env):
       self._robot.SetControlLatency(control_latency)
       # print("latency:",control_latency)
     # print("latency:",self._robot.GetControlLatency())
+    time_spent = time.time() - self._last_frame_time
+    self._last_frame_time = time.time()
+    # print("[step] time_spent: ", time_spent)
     if self._is_render:
       # Sleep, otherwise the computation takes less time than real time,
       # which will make the visualization like a fast-forward video.
-      time_spent = time.time() - self._last_frame_time
-      self._last_frame_time = time.time()
       time_to_sleep = self._env_time_step - time_spent
       if time_to_sleep > 0:
         time.sleep(time_to_sleep)
-      base_pos = self._robot.GetBasePosition()
 
+      base_pos = self._robot.GetBasePosition()
       # Also keep the previous orientation of the camera set by the user.
       [yaw, pitch,
        dist] = self._pybullet_client.getDebugVisualizerCamera()[8:11]
@@ -520,6 +534,7 @@ class LocomotionGymEnv(gym.Env):
       env_randomizer.randomize_step(self)
     # print("step_action:",action)
     # robot class and put the logics here.
+    # call the PD controller of joint position, step time: action_repeat * 0.002
     torques = self._robot.Step(action)
 
     for s in self.all_sensors():

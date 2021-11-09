@@ -29,21 +29,22 @@ def build_regular_env(robot_class,
                       param,
                       sensor_mode = {"dis":1,"imu":1,"motor":1,"contact":1},
                       gait = 0,
-                      normal=0,
+                      normal = 0,
                       enable_rendering=False,
                       task_mode = "plane",
-                      on_rack=False,
+                      on_rack = False,
                       filter = 0,
                       action_space = 0,
                       random = False,
-                      action_limit=(0.75, 0.75, 0.75),
-                      wrap_trajectory_generator=True):
+                      action_limit = (0.75, 0.75, 0.75),
+                      wrap_trajectory_generator=True,
+                      action_repeat = 13):
 
   sim_params = locomotion_gym_config.SimulationParameters()
   sim_params.enable_rendering = enable_rendering
   sim_params.motor_control_mode = motor_control_mode
   sim_params.reset_time = 2
-  sim_params.num_action_repeat = 5
+  sim_params.num_action_repeat = action_repeat
   sim_params.enable_action_interpolation = False
   if filter:
     sim_params.enable_action_filter = True

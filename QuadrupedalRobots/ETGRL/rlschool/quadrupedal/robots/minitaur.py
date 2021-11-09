@@ -244,8 +244,10 @@ class Minitaur(object):
     if control_mode==None:
       control_mode = self._motor_control_mode
     torques = []
+    # calculate joint torques with PD controller
     for i in range(self._action_repeat):
       proc_action = self.ProcessAction(action, i)
+      # run pybullet.setJointMotorControlArray() and pybullet.stepSimulation()
       torques.append(self._StepInternal(proc_action, control_mode))
       self._step_counter += 1
     self._last_action = action
@@ -1217,6 +1219,7 @@ class Minitaur(object):
       n_steps_ago = int(latency / self.time_step)
       if n_steps_ago + 1 >= len(self._observation_history):
         return self._observation_history[-1]
+      # Do linear interpolation from observation history
       remaining_latency = latency - n_steps_ago * self.time_step
       blend_alpha = remaining_latency / self.time_step
       observation = (

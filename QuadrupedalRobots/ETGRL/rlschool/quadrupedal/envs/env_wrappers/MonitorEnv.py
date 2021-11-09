@@ -278,13 +278,20 @@ class ETGWrapper(gym.Wrapper):
       # residual_act(input) + ETG_act
       action = np.asarray(action).reshape(-1) + self.last_ETG_act
       # CPG-RBF, the output of the hidden neuron: V(t), [tuple:2(20x1)]
-      state = self.ETG_agent.update2(t=self.env.get_time_since_reset())
+      t = self.env.get_time_since_reset()
+      state = self.ETG_agent.update2(t)
       # P(t) = W ∗ V(t) + b, W:[3x20], b:[3x1] The phase difference of TG is T/2.
       act_ref = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
+      # local position in foot link's frame
       action_before = act_ref
+      ### Use IK to compute the motor angles
       act_ref = self.ETG_model.act_clip(act_ref, self.robot)
       self.last_ETG_act = act_ref * self.ETG_weight
       obs, rew, done, info = self.env.step(action)
+      if abs(t % 0.5) < 1e-5:
+        print('swing : 112233')
+      if abs(t % 0.5 - 0.25) < 1e-5:
+        print('stance: 445566')
       info["ETG_obs"] = state[0]
       info["ETG_act"] = self.last_ETG_act
     else:
