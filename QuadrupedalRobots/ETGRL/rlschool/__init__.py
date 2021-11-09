@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlschool.liftsim import *
-from rlschool.quadrotor import *
-from rlschool.quadrupedal import *
-
-def make_env(env_id, **kwargs):
-    if env_id == 'LiftSim':
-        return LiftSim(**kwargs)
-    elif env_id == 'Quadrotor':
-        return Quadrotor(**kwargs)
-    elif env_id == 'Quadrupedal':
-        return A1GymEnv(**kwargs)
-    else:
-        raise ValueError('Unknown environment ID.')
+# from rlschool.liftsim import *
+# from rlschool.quadrotor import *
+# from rlschool.quadrupedal import *
+#
+# def make_env(env_id, **kwargs):
+#     if env_id == 'LiftSim':
+#         return LiftSim(**kwargs)
+#     elif env_id == 'Quadrotor':
+#         return Quadrotor(**kwargs)
+#     elif env_id == 'Quadrupedal':
+#         return A1GymEnv(**kwargs)
+#     else:
+#         raise ValueError('Unknown environment ID.')

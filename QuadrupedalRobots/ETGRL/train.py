@@ -16,11 +16,12 @@ import torch
 import numpy as np
 import gym
 import argparse
-import rlschool
 from parl.utils import logger, summary, ReplayMemory
 from model.mujoco_model import MujocoModel
 from model.mujoco_agent import MujocoAgent
 from alg.sac import SAC
+# import rlschool
+import rlschool.quadrupedal as quadrupedal
 from rlschool.quadrupedal.envs.utilities.ETG_model import ETG_layer, ETG_model
 from rlschool.quadrupedal.envs.env_wrappers.MonitorEnv import Param_Dict, Random_Param_Dict
 from rlschool.quadrupedal.robots import robot_config
@@ -63,34 +64,44 @@ mode_map = {"pose"  : robot_config.MotorControlMode.POSITION,
             "torque": robot_config.MotorControlMode.TORQUE,
             "traj"  : robot_config.MotorControlMode.POSITION, }
 
+plt.rcParams['figure.dpi'] = 300
 
 def plot_gait(w, b, ETG, points):
-  plt.scatter(points[:, 0], points[:, 1], c='r', alpha=0.5)
-  t_t = np.arange(0, 0.51, 0.01)
+  w = np.vstack((w[0, ], w[-1, ]))
+  b = np.hstack((b[0], b[-1]))
+  t_t = np.arange(0.0, 0.50, 0.005)
   p = []
   for t in np.nditer(t_t):
     p.append(w.dot(ETG.update(t)) + b)
   p = np.array(p)
+  # plt.subplot(2,1,1)
+  # plt.plot(t_t, p[:, 0], c='r')
+  # plt.plot(t_t, p[:, 1], c='g')
+  # plt.ylim(-0.1, 0.1)
+  # plt.subplot(2,1,2)
   colors = t_t * 200
+  plt.scatter(points[:, 0], points[:, 1], c='r', alpha=0.5)
+  plt.scatter(p[50, 0], p[50, 1], c='b', alpha=1)
   plt.scatter(p[:, 0], p[:, 1], s=10, c=colors, cmap='viridis')
   plt.xlim(-0.1, 0.1)
   plt.ylim(-0.05, 0.15)
+  plt.tight_layout()
   # plt.colorbar()
   plt.show()
 
 
 def LS_sol(A, b, precision=1e-4, alpha=0.05, lamb=1, w0=None):
-  n, m = A.shape  # 20x6
+  n, m = A.shape  # 6x20
   if w0 is not None:
     x = copy(w0)
   else:
-    x = np.zeros((m, 1))
-  err = A.dot(x) - b
+    x = np.zeros((m, 1))  # 20x1
+  err = A.dot(x) - b  # 6x1
   err = err.transpose().dot(err)
   i = 0
   diff = 1
   while err > precision and i < 1000:
-    A1 = A.transpose().dot(A)
+    A1 = A.transpose().dot(A)  # 20x20
     dx = A1.dot(x) - A.transpose().dot(b)
     if w0 is not None:
       dx += lamb * (x - w0)
@@ -109,7 +120,8 @@ def Opt_with_points(ETG, ETG_T=0.4, points=None, b0=None, w0=None, precision=1e-
     Footheight = kwargs["Footheight"] if "Footheight" in kwargs else 0.08
     Penetration = kwargs["Penetration"] if "Penetration" in kwargs else 0.01
     # [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
-    points = np.array([[0, -Penetration], [-Steplength, -Penetration * 0.5], [-Steplength * 1.5, 0.6 * Footheight],
+    points = np.array([[0, -Penetration],
+                       [-Steplength, -Penetration * 0.5], [-Steplength * 1.5, 0.6 * Footheight],
                        [0, Footheight],
                        [Steplength * 1.5, 0.6 * Footheight], [Steplength, -Penetration * 0.5]])
   obs = []
@@ -175,9 +187,8 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     else:
       action = agent.sample(obs)
     # action = np.zeros(action_dim)
-    new_action = copy(action)
-    # Perform action
-    # action_bound: [0.3,0.3,0.3] * 4
+    new_action = copy(action)  # initial residual control signal
+    # Perform action, action_bound: [0.3,0.3,0.3] * 4
     next_obs, reward, done, info = env.step(new_action * action_bound, donef=(episode_steps > max_step))
     terminal = float(done) if episode_steps < 2000 else 0
     terminal = 1. - terminal
@@ -193,12 +204,12 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     rpm.append(obs, action, reward, next_obs, terminal)
     obs = next_obs
     episode_reward += reward
-    # Train agent after collecting sufficient data
+    # Train agent after collecting sufficient data, off-policy actor-critic algorithm
     if rpm.size() >= WARMUP_STEPS:
-      batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(
-        BATCH_SIZE)
-      critic_loss, actor_loss = agent.learn(batch_obs, batch_action, batch_reward, batch_next_obs,
-                                            batch_terminal)
+      # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE))
+      batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
+      critic_loss, actor_loss = agent.learn(
+        batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
       critic_loss_list.append(critic_loss)
       actor_loss_list.append(actor_loss)
     if episode_steps > max_step:
@@ -218,18 +229,16 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None):
   avg_reward = 0.
   infos = {}
   steps_all = 0
-  # w = None
-  # b = None
   obs, info = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
   done = False
   steps = 0
   while True:
     steps += 1
     t0 = time.clock()
-    action = agent.predict(obs)
+    action = agent.predict(obs)  # NN output: residual control signal
     t1 = time.clock() - t0
     new_action = action
-    # new_action = np.zeros(12)
+    new_action = np.zeros(12)
     obs, reward, done, info = env.step(new_action * action_bound, donef=(steps > max_step))
     # if args.eval == 1:
     # img=p.getCameraImage(640, 480, renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
@@ -343,7 +352,7 @@ def main():
 
   ##ES init
   if os.path.exists(args.ETG_path):
-    ETG_info = np.load(args.ETG_path)
+    ETG_info = np.load(args.ETG_pat+h)
     ETG_param_init = ETG_info["param"].reshape(-1)
     print("ETG_param_init:", ETG_param_init.shape)
   else:
@@ -359,22 +368,22 @@ def main():
                        param=ETG_param_init)
   # ETG init
   phase = np.array([-np.pi / 2, 0])
-  ETG_agent = ETG_layer(args.ETG_T, 0.026, args.ETG_H, 0.04, phase, 0.2, args.ETG_T2)
+  dt = args.action_repeat_num * 0.002  # default: 13 * 0.002 = 0.026s
+  ETG_agent = ETG_layer(args.ETG_T, dt, args.ETG_H, 0.04, phase, 0.2, args.ETG_T2)
+  # prior_points: 6x2 [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
   w0, b0, prior_points = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T,
                                          Footheight=args.footheight, Steplength=args.steplen)
-  # plt.plot(prior_points[:, 0], prior_points[:, -1], "or")
   if not os.path.exists(args.ETG_path):
     np.savez(args.ETG_path, w=w0, b=b0, param=prior_points)
   dynamic_param = np.load("data/sigma0.5_exp0_dynamic_param9027.npy")
   dynamic_param = param2dynamic_dict(dynamic_param)
 
-  env = rlschool.make_env('Quadrupedal', task=args.task_mode, motor_control_mode=mode, render=render,
-                          sensor_mode=sensor_mode,
-                          normal=args.normal, dynamic_param=dynamic_param, reward_param=param,
-                          ETG=args.ETG, ETG_T=args.ETG_T, reward_p=args.reward_p, ETG_path=args.ETG_path,
-                          random_param=random_param,
-                          ETG_H=args.ETG_H, vel_d=args.vel_d, step_y=args.step_y,
-                          enable_action_filter=args.enable_action_filter)
+  env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode, render=render,
+                             on_rack=False, sensor_mode=sensor_mode, normal=args.normal,
+                             reward_param=param, random_param=random_param, dynamic_param=dynamic_param,
+                             ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=args.ETG_path,
+                             vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
+                             enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
   e_step = args.e_step
   obs_dim = env.observation_space.shape[0]
   action_dim = env.action_space.shape[0]
@@ -387,7 +396,7 @@ def main():
   elif args.act_mode == "traj":
     act_bound = np.array([act_bound_now, act_bound_now, act_bound_now] * 4)  # 0.3*12
 
-  # Initialize model, algorithm, agent, replay_memory
+  # Initialize RL model, algorithm, agent, replay_memory
   model = MujocoModel(obs_dim, action_dim)
   algorithm = SAC(
     model,
@@ -396,9 +405,9 @@ def main():
     alpha=ALPHA,
     actor_lr=ACTOR_LR,
     critic_lr=CRITIC_LR)
-  agent = MujocoAgent(algorithm)
+  RL_agent = MujocoAgent(algorithm)
   if len(args.load) > 0:
-    agent.restore(args.load)
+    RL_agent.restore(args.load)
   rpm = ReplayMemory(max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
 
   # training mode
@@ -419,13 +428,12 @@ def main():
     # init w,b
     ETG_best_param = ES_solver.get_best_param()
     points_add = ETG_best_param.copy().reshape(-1, 2)
-    # prior_points: 6x2 [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
     new_points = prior_points + points_add
     w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
     ES_step = 0
     while total_steps < args.max_steps:
       # Train episode
-      episode_reward, episode_step, info = run_train_episode(agent, env, rpm, e_step, act_bound, w, b)
+      episode_reward, episode_step, info = run_train_episode(RL_agent, env, rpm, e_step, act_bound, w, b)
       total_steps += episode_step
       t_steps += episode_step
       summary.add_scalar('train/episode_reward', episode_reward,
@@ -443,7 +451,7 @@ def main():
       if (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
         while (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
           test_flag += 1
-          avg_reward, avg_step, info = run_evaluate_episodes(agent, env, 600, act_bound, w, b)
+          avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b)
           logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
             EVAL_EPISODES, avg_reward, avg_step))
           summary.add_scalar('eval/episode_reward', avg_reward,
@@ -459,17 +467,17 @@ def main():
         path = os.path.join(outdir, 'itr_{:d}.pt'.format(int(total_steps)))
         # if not os.path.exists(path):
         #     os.mkdir(path)
-        agent.save(path)
+        RL_agent.save(path)
         np.savez(os.path.join(outdir, 'itr_{:d}.npz'.format(int(total_steps))), w=w, b=b, param=ETG_best_param)
 
       # ES episode, ES_EVERY_STEPS=50000, WARMUP_STEPS=10000
       if args.ES and (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag and total_steps >= WARMUP_STEPS:
         while (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag:
           ES_test_flag += 1
-          best_reward, avg_step, info = run_EStrain_episode(agent, env, rpm, 400, act_bound, w, b)
+          best_reward, avg_step, info = run_EStrain_episode(RL_agent, env, rpm, 400, act_bound, w, b)
           best_param = ETG_best_param.copy().reshape(-1)
           for ei in range(ES_TRAIN_STEPS):  # ES_TRAIN_STEPS=10
-            solutions = ES_solver.ask()
+            solutions = ES_solver.ask()  # size: args.popsize(default 40)
             fitness_list = []
             steps = []
             infos = {}
@@ -479,14 +487,8 @@ def main():
               points_add = solution.reshape(-1, 2)
               new_points = prior_points + points_add
               # if args.suffix is 'debug':
-              # plt.plot(prior_points[:, 0], prior_points[:, -1], "or")
-              # plt.plot(new_points[:, 0], new_points[:, -1], "ob")
-              # plt.xlim(-0.1, 0.1)
-              # plt.ylim(-0.05, 0.15)
-              # plt.show()
               w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
-              episode_reward, episode_step, info = run_EStrain_episode(agent, env, rpm, 400, act_bound, w,
-                                                                       b)
+              episode_reward, episode_step, info = run_EStrain_episode(RL_agent, env, rpm, 400, act_bound, w, b)
               fitness_list.append(episode_reward)
               steps.append(episode_step)
               for key in infos.keys():
@@ -500,10 +502,10 @@ def main():
             ES_solver.tell(fitness_list)
             results = ES_solver.result()
             ES_step += 1
-            sig = np.mean(results[3])
+            sigma = np.mean(results[3])
             logger.info('[ESSteps: {}] Reward: {} step: {}  sigma:{}'.format(ES_step, np.max(fitness_list),
                                                                              np.mean(steps), sig))
-            summary.add_scalar('ES/sigma', sig, ES_step)
+            summary.add_scalar('ES/sigma', sigma, ES_step)
             summary.add_scalar('ES/episode_reward', np.mean(fitness_list), ES_step)
             summary.add_scalar('ES/episode_minre', np.min(fitness_list), ES_step)
             summary.add_scalar('ES/episode_maxre', np.max(fitness_list), ES_step)
@@ -522,10 +524,14 @@ def main():
     ETG_info = np.load(args.load[:-3] + ".npz")
     w = ETG_info["w"]
     b = ETG_info["b"]
+    # w = w0
+    # b = b0
     outdir = os.path.join(args.load[:-3], args.task_mode)
     if not os.path.exists(args.load[:-3]):
       os.makedirs(args.load[:-3])
-    avg_reward, avg_step, info = run_evaluate_episodes(agent, env, 1500, act_bound, w, b)
+    plot_gait(w, b, ETG_agent, prior_points)
+    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 1500, act_bound, w, b)
+    # record a video for debuging
     # os.system("ffmpeg -r 38 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     # os.system("rm -rf img/*")
     logger.info('Evaluation over: {} episodes, Reward: {} Steps: {}'.format(
@@ -587,6 +593,6 @@ if __name__ == "__main__":
   parser.add_argument("--ES", type=int, default=1)
   parser.add_argument("--es_rpm", type=int, default=1, help='ES training store into RPM for SAC')
   parser.add_argument("--x_noise", type=int, default=0)
+  parser.add_argument("--action_repeat_num", type=int, default=13)
   args = parser.parse_args()
-
   main()
