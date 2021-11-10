@@ -288,10 +288,10 @@ class ETGWrapper(gym.Wrapper):
       act_ref = self.ETG_model.act_clip(act_ref, self.robot)
       self.last_ETG_act = act_ref * self.ETG_weight
       obs, rew, done, info = self.env.step(action)
-      if abs(t % 0.5) < 1e-5:
-        print('swing : 112233')
-      if abs(t % 0.5 - 0.25) < 1e-5:
-        print('stance: 445566')
+      # if abs(t % 0.5) < 1e-5:
+      #   print('swing : 112233')
+      # if abs(t % 0.5 - 0.25) < 1e-5:
+      #   print('stance: 445566')
       info["ETG_obs"] = state[0]
       info["ETG_act"] = self.last_ETG_act
     else:
@@ -336,9 +336,10 @@ class RewardShaping(gym.Wrapper):
   def step(self, action, **kwargs):
     self.steps += 1
     obs, rew, done, info = self.env.step(action, **kwargs)
+    info["velx"] = rew  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
     self.env_vec = np.array([0, 0, 0, 0, 0, 0, 0])
     posex = info["base"][0]
-    for env_v in info["env_info"]:
+    for env_v in info["env_info"]:  # [lastx, basex, env_vec]
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:
         self.env_vec = env_v[2]
         break
@@ -352,25 +353,19 @@ class RewardShaping(gym.Wrapper):
       info["scene"] = "downstair"
     else:
       info["scene"] = "plane"
-    v = (np.array(info["base"]) - np.array(self.last_basepose)) / 0.026
-    if "d_yaw" in kwargs.keys():
-      info['d_yaw'] = kwargs["d_yaw"]
-    else:
-      info['d_yaw'] = 0
-    donef = kwargs["donef"] if "donef" in kwargs.keys() else False
-    info = self.reward_shaping(obs, rew, done, info, action, donef)
+    v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     info["vel"] = v
+    info["d_yaw"] = kwargs["d_yaw"] if "d_yaw" in kwargs.keys() else 0
+    donef = kwargs["donef"] if "donef" in kwargs.keys() else False
+    # get reward terms, stored in the "info"
+    info = self.reward_shaping(obs, rew, done, info, action, donef)
     rewards = 0
     done = self.terminate(info)
-    if done:
-      info["done"] = -1
-    else:
-      info["done"] = 0
+    info["done"] = -1 if done else 0
     for key in Param_Dict.keys():
       if key in info.keys():
         # print(key)
         rewards += info[key]
-    info["velx"] = rew
     self.last_basepose = copy(info["base"])
     self.last_base10[1:, :] = self.last_base10[:9, :]
     self.last_base10[0, :] = np.array(info['base']).reshape(1, 3)
@@ -385,9 +380,9 @@ class RewardShaping(gym.Wrapper):
     torso = self.re_torso(info, last_basepose=last_basepose)
     info['torso'] = self.param['torso'] * torso
     if last_basepose is None:
-      v = (np.array(info["base"]) - np.array(self.last_basepose)) / 0.026
+      v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
-      v = (np.array(info["base"]) - np.array(last_basepose)) / 0.026
+      v = (np.array(info["base"]) - np.array(last_basepose)) / self.env.env_time_step
     k = 1 - self.c_prec(min(v[0], self.vel_d), self.vel_d, 0.5)
     info['up'] = (self.param['up']) * self.re_up(info) * k
     info['feet'] = self.param['feet'] * self.re_feet(info, last_footposition=last_footposition)
@@ -421,7 +416,7 @@ class RewardShaping(gym.Wrapper):
     return -energy
 
   def re_still(self, info):
-    v = (np.array(info["base"]) - np.array(self.last_basepose)) / 0.026
+    v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     return -np.linalg.norm(v)
 
   def re_standupright(self, info):
@@ -480,9 +475,9 @@ class RewardShaping(gym.Wrapper):
       vd[2] = -abs(np.sin(env_vec[4]))
     foot = self.get_foot_world(info)
     if last_footposition is None:
-      d_foot = (foot - self.last_footposition) / 0.026
+      d_foot = (foot - self.last_footposition) / self.env.env_time_step
     else:
-      d_foot = (foot - last_footposition) / 0.026
+      d_foot = (foot - last_footposition) / self.env.env_time_step
     v_sum = 0
     contact = copy(info["real_contact"])
     for i in range(4):
@@ -508,9 +503,9 @@ class RewardShaping(gym.Wrapper):
 
   def re_torso(self, info, vd=[1, 0, 0], last_basepose=None):
     if last_basepose is None:
-      v = (np.array(info["base"]) - np.array(self.last_basepose)) / 0.026
+      v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
-      v = (np.array(info["base"]) - np.array(last_basepose)) / 0.026
+      v = (np.array(info["base"]) - np.array(last_basepose)) / self.env.env_time_step
     vd[0] = np.cos(info['d_yaw'])
     vd[1] = np.sin(info['d_yaw'])
     posex = info["base"][0]
