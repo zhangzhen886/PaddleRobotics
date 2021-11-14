@@ -85,13 +85,13 @@ class LocomotionGymEnv(gym.Env):
     self._robot_sensors = robot_sensors
     self.param = param
     self.random = random
-    self._sensors = env_sensors if env_sensors is not None else list()
+    self._env_sensors = env_sensors if env_sensors is not None else list()
     if self._robot_class is None:
       raise ValueError('robot_class cannot be None.')
 
     # A dictionary containing the objects in the world other than the robot.
     self._world_dict = {}
-    self._task = task
+    self._task = task  # task = simple_forward_task.SimpleForwardTask, in "build_regular_env()"
     self.height_field = 0
     self.task_mode = task_mode 
     self.terrain_dict = {1:upstair_downslope, 2:upslope_downstair, 3:upstair_downstair, 4:upslope_downslope}
@@ -103,7 +103,7 @@ class LocomotionGymEnv(gym.Env):
 
     # This is a workaround due to the issue in b/130128505#comment5
     if isinstance(self._task, sensor.Sensor):
-      self._sensors.append(self._task)
+      self._env_sensors.append(self._task)
 
     # Simulation related parameters.
     self._num_action_repeat = gym_config.simulation_parameters.num_action_repeat
@@ -210,7 +210,7 @@ class LocomotionGymEnv(gym.Env):
 
   def all_sensors(self):
     """Returns all robot and environmental sensors."""
-    return self._robot.GetAllSensors() + self._sensors
+    return self._robot.GetAllSensors() + self._env_sensors
 
   def sensor_by_name(self, name):
     """Returns the sensor with the given name, or None if not exist."""
@@ -268,22 +268,24 @@ class LocomotionGymEnv(gym.Env):
 
       # Rebuild the robot
       self._robot = self._robot_class(
-          pybullet_client=self._pybullet_client,
-          sensors=self._robot_sensors,
-          on_rack=self._on_rack,
-          action_repeat=self._gym_config.simulation_parameters.
+        pybullet_client=self._pybullet_client,
+        sensors=self._robot_sensors,
+        on_rack=self._on_rack,
+        action_repeat=self._gym_config.simulation_parameters.
           num_action_repeat,
-          time_step=self._gym_config.simulation_parameters.sim_time_step_s,
-          motor_control_mode=self._gym_config.simulation_parameters.
+        time_step=self._gym_config.simulation_parameters.
+          sim_time_step_s,
+        motor_control_mode=self._gym_config.simulation_parameters.
           motor_control_mode,
-          reset_time=self._gym_config.simulation_parameters.reset_time,
-          enable_clip_motor_commands=self._gym_config.simulation_parameters.
+        reset_time=self._gym_config.simulation_parameters.
+          reset_time,
+        enable_clip_motor_commands=self._gym_config.simulation_parameters.
           enable_clip_motor_commands,
-          enable_action_filter=self._gym_config.simulation_parameters.
+        enable_action_filter=self._gym_config.simulation_parameters.
           enable_action_filter,
-          enable_action_interpolation=self._gym_config.simulation_parameters.
+        enable_action_interpolation=self._gym_config.simulation_parameters.
           enable_action_interpolation,
-          allow_knee_contact=self._gym_config.simulation_parameters.
+        allow_knee_contact=self._gym_config.simulation_parameters.
           allow_knee_contact)
       # if "stepheight" in kwargs.keys():
       # upstair_terrain(stepwidth=0.33,stepheight=0.05,mode="var")
@@ -453,12 +455,12 @@ class LocomotionGymEnv(gym.Env):
     info = {}
     info["rot_quat"] = self._robot.GetBaseOrientation()
     info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
+    info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
+    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
     info["base"] = self._robot.GetBasePosition()
     info["footposition"] = self._robot.GetFootPositionsInBaseFrame()
-    info["pose"] = self._robot.GetBaseRollPitchYaw()
     info["real_contact"] = self._robot.GetFootContacts()
     info["joint_angle"] = self._robot.GetMotorAngles()
-    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
     info["env_info"] = self.env_info
     info["energy"] = self._robot.GetEnergyConsumptionPerControlStep()
     info["latency"] = self._robot.GetControlLatency()
@@ -543,7 +545,7 @@ class LocomotionGymEnv(gym.Env):
     if self._task and hasattr(self._task, 'update'):
       self._task.update(self)
 
-    reward = self._reward(action,torques)
+    reward = self._reward(action,torques)  #
 
     done = self._termination()
     self._env_step_counter += 1
@@ -553,13 +555,13 @@ class LocomotionGymEnv(gym.Env):
     info = {}
     info["rot_quat"] = self._robot.GetBaseOrientation()
     info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
+    info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
+    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
     info["base"] = self._robot.GetBasePosition()
     info["footposition"] = self._robot.GetFootPositionsInBaseFrame()
-    info["pose"] = self._robot.GetBaseRollPitchYaw()
     info["real_contact"] = self._robot.GetFootContacts()
     info["joint_angle"] = self._robot.GetMotorAngles()
-    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
-    info["env_info"] = self.env_info
+    info["env_info"] = self.env_info  # [lastx, basex, env_vec] in "upstair_terrain"
     info["energy"] = self._robot.GetEnergyConsumptionPerControlStep()
     info["latency"] = self._robot.GetControlLatency()
     return self._get_observation(), reward, done, info

@@ -26,10 +26,10 @@ SENSOR_MODE = {"dis":1,"motor":1,"imu":1,"contact":1,"footpose":0,"ETG":0}
 # call in A1GymEnv.init()
 def build_regular_env(robot_class,
                       motor_control_mode,
-                      param,
+                      dynamic_param,
                       sensor_mode = {"dis":1,"imu":1,"motor":1,"contact":1},
                       gait = 0,
-                      normal = 0,
+                      normal = 0,  # Normalisation, (x-mean)/std
                       enable_rendering=False,
                       task_mode = "plane",
                       on_rack = False,
@@ -41,28 +41,28 @@ def build_regular_env(robot_class,
                       action_repeat = 13):
 
   sim_params = locomotion_gym_config.SimulationParameters()
+  sim_params.sim_time_step_s = 1. / 500.
+  sim_params.num_action_repeat = action_repeat
   sim_params.enable_rendering = enable_rendering
   sim_params.motor_control_mode = motor_control_mode
   sim_params.reset_time = 2
-  sim_params.num_action_repeat = action_repeat
-  sim_params.enable_action_interpolation = False
   if filter:
     sim_params.enable_action_filter = True
   else:
     sim_params.enable_action_filter = False
+  sim_params.enable_action_interpolation = False
   sim_params.enable_clip_motor_commands = False
   sim_params.robot_on_rack = on_rack
-  dt = sim_params.num_action_repeat*sim_params.sim_time_step_s  # 13 * 0.002 = 0.026
-
-#   sim_params.sim_time_step_s = 1./500.
-
   gym_config = locomotion_gym_config.LocomotionGymConfig(
       simulation_parameters=sim_params)
+
+  # choice sensors(observation variables), called in
   sensors = []
   noise = True if ("noise" in sensor_mode and sensor_mode["noise"]) else False
-  print(sensor_mode)
+  dt = sim_params.num_action_repeat * sim_params.sim_time_step_s  # 13 * 0.002 = 0.026
+  # print(sensor_mode)
   if sensor_mode["dis"]:
-    sensors.append(robot_sensors.BaseDisplacementSensor(convert_to_local_frame=True,normal=normal,noise=noise))
+    sensors.append(robot_sensors.BaseDisplacementSensor(convert_to_local_frame=True,normal=normal,noise=noise,dt=dt))
   if sensor_mode["imu"]==1:
     sensors.append(robot_sensors.IMUSensor(channels=["R", "P", "Y","dR", "dP", "dY"],normal=normal,noise=noise))
   elif sensor_mode["imu"]==2:
@@ -79,10 +79,10 @@ def build_regular_env(robot_class,
     sensors.append(robot_sensors.FootPoseSensor(normal=normal))
   # print(sensors)
 
-  task = simple_forward_task.SimpleForwardTask(param)
+  task = simple_forward_task.SimpleForwardTask(dynamic_param)
 
   env = locomotion_gym_env.LocomotionGymEnv(gym_config=gym_config,
-                                            param = param,
+                                            param = dynamic_param,
                                             robot_class=robot_class,
                                             robot_sensors=sensors,
                                             random=random,

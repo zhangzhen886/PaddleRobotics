@@ -18,7 +18,8 @@ class A1GymEnv(gym.Env):
   metadata = {'render.modes': ['rgb_array']}
 
   def __init__(self,
-               action_limit=(0.75, 0.75, 0.75),
+               task="plane",
+               motor_control_mode=robot_config.MotorControlMode.POSITION,
                render=False,
                on_rack=False,
                sensor_mode=SENSOR_MODE,
@@ -28,17 +29,16 @@ class A1GymEnv(gym.Env):
                action_space=0,
                random_dynamic=False,
                reward_param=Param_Dict,
+               random_param=Random_Param_Dict,
+               dynamic_param={},
                ETG=0,
                ETG_T=0.5,
                ETG_H=20,
                ETG_path="",
-               random_param=Random_Param_Dict,
                vel_d=0.6,
                step_y=0.05,
-               task="plane",
                reward_p=1.0,
-               motor_control_mode=robot_config.MotorControlMode.POSITION,
-               dynamic_param={},
+               action_limit=(0.75, 0.75, 0.75),
                action_repeat=13,
                **kwargs):
     self._env = env_builder.build_regular_env(
@@ -54,12 +54,12 @@ class A1GymEnv(gym.Env):
       filter=filter_,
       action_space=action_space,
       on_rack=on_rack,
-      param=dynamic_param,
-      action_repeat=action_repeat)
-
+      dynamic_param=dynamic_param,
+      action_repeat=action_repeat,
+    )
     self._env = EnvWrapper(
       env=self._env,
-      param=reward_param,
+      reward_param=reward_param,
       sensor_mode=sensor_mode,
       normal=normal,
       ETG_T=ETG_T,

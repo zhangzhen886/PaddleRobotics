@@ -9,13 +9,24 @@ from rlschool.quadrupedal.robots import action_filter
 from rlschool.quadrupedal.envs.utilities.ETG_model import ETG_layer, ETG_model
 from copy import copy
 
-Param_Dict = {'torso'      : 1.0, 'up': 0.3, 'feet': 0.2, 'tau': 0.1, 'done': 1, 'velx': 0, 'badfoot': 0.1,
-              'footcontact': 0.1}
-Random_Param_Dict = {'random_dynamics': 0, 'random_force': 0}
+Param_Dict = {
+  'torso'      : 1.0,
+  'up'         : 0.3,
+  'feet'       : 0.2,
+  'tau'        : 0.1,
+  'done'       : 1,
+  'velx'       : 0,
+  'badfoot'    : 0.1,
+  'footcontact': 0.1,
+}
+Random_Param_Dict = {
+  'random_dynamics': 0,
+  'random_force'   : 0
+}
 
 
 # call in A1GymEnv.init(), behind "build_regular_env()"
-def EnvWrapper(env, param, sensor_mode, normal=0, ETG_T=0.5, enable_action_filter=False,
+def EnvWrapper(env, reward_param, sensor_mode, normal=0, ETG_T=0.5, enable_action_filter=False,
                reward_p=1, ETG=1, ETG_path="", ETG_T2=0.5, random_param=None,
                ETG_H=20, act_mode="traj", vel_d=0.6, vel_mode="max",
                task_mode="normal", step_y=0.05):
@@ -25,7 +36,7 @@ def EnvWrapper(env, param, sensor_mode, normal=0, ETG_T=0.5, enable_action_filte
   env = ActionFilterWrapper(env=env, enable_action_filter=enable_action_filter)
   env = RandomWrapper(env=env, random_param=random_param)
   env = ObservationWrapper(env=env, ETG=ETG, sensor_mode=sensor_mode, normal=normal, ETG_H=ETG_H)
-  env = RewardShaping(env=env, param=param, reward_p=reward_p, vel_d=vel_d, vel_mode=vel_mode)
+  env = RewardShaping(env=env, reward_param=reward_param, reward_p=reward_p, vel_d=vel_d, vel_mode=vel_mode)
   return env
 
 
@@ -165,7 +176,7 @@ class ObservationWrapper(gym.Wrapper):
         d_yaw = kwargs["d_yaw"]
       else:
         d_yaw = 0
-      yaw_now = info["pose"][-1]
+      yaw_now = info["rot_euler"][-1]
       yaw_info = np.array([np.cos(d_yaw - yaw_now), np.sin(d_yaw - yaw_now)])
       obs = np.concatenate((obs, yaw_info), axis=0)
 
@@ -187,21 +198,21 @@ class ObservationWrapper(gym.Wrapper):
     obs, rew, done, info = self.env.step(action, **kwargs)
     if self.ETG:
       if "ETG" in self.sensor_mode.keys() and self.sensor_mode["ETG"]:
-        ETG_out = info["ETG_act"]
+        ETG_out = info["ETG_act"]  # expanded policy input, 12
         if self.normal:
           ETG_out = (ETG_out - self.ETG_mean) / self.ETG_std
         obs = np.concatenate((obs, ETG_out), axis=0)
 
       if "ETG_obs" in self.sensor_mode.keys() and self.sensor_mode["ETG_obs"]:
-        ETG_obs = info["ETG_obs"]
+        ETG_obs = info["ETG_obs"]  # 20
         obs = np.concatenate((obs, ETG_obs), axis=0)
 
     if "force_vec" in self.sensor_mode.keys() and self.sensor_mode["force_vec"]:
-      force_vec = info["force_vec"]
+      force_vec = info["force_vec"]  # 6
       obs = np.concatenate((obs, force_vec), axis=0)
 
     if "dynamic_vec" in self.sensor_mode.keys() and self.sensor_mode["dynamic_vec"]:
-      dynamic_vec = self.dynamic_info
+      dynamic_vec = self.dynamic_info  # 3
       obs = np.concatenate((obs, dynamic_vec), axis=0)
 
     if "yaw" in self.sensor_mode.keys() and self.sensor_mode["yaw"]:
@@ -209,7 +220,7 @@ class ObservationWrapper(gym.Wrapper):
         d_yaw = kwargs["d_yaw"]
       else:
         d_yaw = 0
-      yaw_now = info["pose"][-1]
+      yaw_now = info["rot_euler"][-1]
       yaw_info = np.array([np.cos(d_yaw - yaw_now), np.sin(d_yaw - yaw_now)])
       obs = np.concatenate((obs, yaw_info), axis=0)
 
@@ -284,7 +295,7 @@ class ETGWrapper(gym.Wrapper):
       act_ref = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
       # local position in foot link's frame
       action_before = act_ref
-      ### Use IK to compute the motor angles
+      ### Use IK to compute the motor angles, act_ref = etg_act - init_act !
       act_ref = self.ETG_model.act_clip(act_ref, self.robot)
       self.last_ETG_act = act_ref * self.ETG_weight
       obs, rew, done, info = self.env.step(action)
@@ -300,9 +311,9 @@ class ETGWrapper(gym.Wrapper):
 
 
 class RewardShaping(gym.Wrapper):
-  def __init__(self, env, param, reward_p=1, vel_d=0.6, vel_mode="max"):
+  def __init__(self, env, reward_param, reward_p=1, vel_d=0.6, vel_mode="max"):
     gym.Wrapper.__init__(self, env)
-    self.param = param
+    self.reward_param = reward_param
     self.reward_p = reward_p
     self.last_base10 = np.zeros((10, 3))
     self.robot = self.env.robot
@@ -336,7 +347,6 @@ class RewardShaping(gym.Wrapper):
   def step(self, action, **kwargs):
     self.steps += 1
     obs, rew, done, info = self.env.step(action, **kwargs)
-    info["velx"] = rew  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
     self.env_vec = np.array([0, 0, 0, 0, 0, 0, 0])
     posex = info["base"][0]
     for env_v in info["env_info"]:  # [lastx, basex, env_vec]
@@ -353,43 +363,45 @@ class RewardShaping(gym.Wrapper):
       info["scene"] = "downstair"
     else:
       info["scene"] = "plane"
-    v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
-    info["vel"] = v
+    info["vel"] = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     info["d_yaw"] = kwargs["d_yaw"] if "d_yaw" in kwargs.keys() else 0
     donef = kwargs["donef"] if "donef" in kwargs.keys() else False
     # get reward terms, stored in the "info"
     info = self.reward_shaping(obs, rew, done, info, action, donef)
-    rewards = 0
     done = self.terminate(info)
-    info["done"] = -1 if done else 0
+    rewards = 0
+    info["done"] = -1 * self.reward_param['done'] if done else 0
+    info["velx"] = rew * self.reward_param['velx']  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
+    # sum the reward terms
     for key in Param_Dict.keys():
       if key in info.keys():
         # print(key)
         rewards += info[key]
     self.last_basepose = copy(info["base"])
     self.last_base10[1:, :] = self.last_base10[:9, :]
-    self.last_base10[0, :] = np.array(info['base']).reshape(1, 3)
+    self.last_base10[0, :] = np.array(info["base"]).reshape(1, 3)
     self.last_footposition = self.get_foot_world(info)
     info["foot_position_world"] = copy(self.last_footposition)
     if self.render:
       self.pybullet_client.removeUserDebugItem(self.line_id)
       self.line_id = self.draw_direction(info)
-    return (obs, self.reward_p * rewards, done, info)
+    return (obs, self.reward_p * rewards, done, info)  # reward_p: default 5.0
 
   def reward_shaping(self, obs, rew, done, info, action, donef, last_basepose=None, last_footposition=None):
     torso = self.re_torso(info, last_basepose=last_basepose)
-    info['torso'] = self.param['torso'] * torso
+    info['torso'] = self.reward_param['torso'] * self.re_torso(info, last_basepose=last_basepose)  # base velocity
     if last_basepose is None:
       v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
       v = (np.array(info["base"]) - np.array(last_basepose)) / self.env.env_time_step
     k = 1 - self.c_prec(min(v[0], self.vel_d), self.vel_d, 0.5)
-    info['up'] = (self.param['up']) * self.re_up(info) * k
-    info['feet'] = self.param['feet'] * self.re_feet(info, last_footposition=last_footposition)
-    info['tau'] = -self.param['tau'] * info['energy'] * k
-    info['badfoot'] = -self.param['badfoot'] * self.robot.GetBadFootContacts()
+    info['up'] = self.reward_param['up'] * self.re_up(info) * k  # roll and pitch
+    info['feet'] = self.reward_param['feet'] * self.re_feet(info, last_footposition=last_footposition)  # foot velocity
+    # discouraged terms
+    info['tau'] = -self.reward_param['tau'] * info["energy"] * k
+    info['badfoot'] = -self.reward_param['badfoot'] * self.robot.GetBadFootContacts()
     lose_contact_num = np.sum(1.0 - np.array(info["real_contact"]))
-    info['footcontact'] = -self.param['footcontact'] * max(lose_contact_num - 2, 0)
+    info['footcontact'] = -self.reward_param['footcontact'] * max(lose_contact_num - 2, 0)
     return info
 
   def draw_direction(self, info):
@@ -403,7 +415,7 @@ class RewardShaping(gym.Wrapper):
 
   def terminate(self, info):
     rot_mat = info["rot_mat"]
-    pose = info["pose"]
+    pose = info["rot_euler"]
     footposition = copy(info["footposition"])
     footz = footposition[:, -1]
     base = info["base"]
@@ -431,7 +443,7 @@ class RewardShaping(gym.Wrapper):
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:
         env_vec = env_v[2]
         break
-    pose = copy(info["pose"])
+    pose = copy(info["rot_euler"])
     roll = pose[0]
     pitch = pose[1]
     if env_vec[0]:
@@ -442,7 +454,7 @@ class RewardShaping(gym.Wrapper):
     return 1 - self.c_prec(r, 0, 0.4)
 
   def re_rot(self, info, r):
-    pose = copy(info["pose"])
+    pose = copy(info["rot_euler"])
     yaw = pose[-1]
     k1 = 1 - self.c_prec(yaw, info['d_yaw'], 0.5)
     k2 = 1 - self.c_prec(yaw, info['d_yaw'] + 2 * np.pi, 0.5)
@@ -473,11 +485,11 @@ class RewardShaping(gym.Wrapper):
       vd[0] *= abs(np.cos(env_vec[4]))
       vd[1] *= abs(np.cos(env_vec[4]))
       vd[2] = -abs(np.sin(env_vec[4]))
-    foot = self.get_foot_world(info)
+    footposition = self.get_foot_world(info)
     if last_footposition is None:
-      d_foot = (foot - self.last_footposition) / self.env.env_time_step
+      d_foot = (footposition - self.last_footposition) / self.env.env_time_step
     else:
-      d_foot = (foot - last_footposition) / self.env.env_time_step
+      d_foot = (footposition - last_footposition) / self.env.env_time_step
     v_sum = 0
     contact = copy(info["real_contact"])
     for i in range(4):
