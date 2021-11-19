@@ -10,14 +10,17 @@ from rlschool.quadrupedal.envs.utilities.ETG_model import ETG_layer, ETG_model
 from copy import copy
 
 Param_Dict = {
-  'torso'      : 1.0,
-  'up'         : 0.3,
-  'feet'       : 0.2,
-  'tau'        : 0.1,
-  'done'       : 1,
-  'velx'       : 0,
-  'badfoot'    : 0.1,
-  'footcontact': 0.1,
+  'rew_torso'       : 0.0,
+  'rew_up'          : 0.6,
+  'rew_feet_vel'    : 0.0,
+  'rew_tau'         : 0.2,
+  'rew_done'        : 1,
+  'rew_velx'        : 0,
+  'rew_actionrate'  : 0.5,
+  'rew_badfoot'     : 0.1,
+  'rew_footcontact' : 0.1,
+  'rew_feet_airtime': 1.0,
+  'rew_feet_pos'    : 1.0
 }
 Random_Param_Dict = {
   'random_dynamics': 0,
@@ -324,22 +327,26 @@ class RewardShaping(gym.Wrapper):
     self.steps = 0
     self.vel_mode = vel_mode
     self.yaw_init = 0.0
+    self.last_contacts = np.zeros(4)
+    self.feet_air_time = np.zeros(4)
+    self.last_action = np.zeros(12)
 
   def reset(self, **kwargs):
     self.steps = 0
     obs, info = self.env.reset(**kwargs)
     self.yaw_init = info["yaw_init"]
     obs, rew, done, infos = self.env.step(np.zeros(self.action_space.high.shape[0]))
-    self.last_basepose = info["base"]
+    self.last_basepose = info["base_position"]
     self.last_footposition = self.get_foot_world(info)
-    base_pose = info["base"]
+    self.last_contact_position = self.last_footposition
+    base_pose = info["base_position"]
     self.last_base10 = np.tile(base_pose, (10, 1))
     info["foot_position_world"] = copy(self.last_footposition)
     info["scene"] = "plane"
     if "d_yaw" in kwargs.keys():
-      info['d_yaw'] = kwargs["d_yaw"]
+      info["d_yaw"] = kwargs["d_yaw"]
     else:
-      info['d_yaw'] = 0
+      info["d_yaw"] = 0
     if self.render:
       self.line_id = self.draw_direction(info)
     return obs, info
@@ -348,7 +355,7 @@ class RewardShaping(gym.Wrapper):
     self.steps += 1
     obs, rew, done, info = self.env.step(action, **kwargs)
     self.env_vec = np.array([0, 0, 0, 0, 0, 0, 0])
-    posex = info["base"][0]
+    posex = info["base_position"][0]
     for env_v in info["env_info"]:  # [lastx, basex, env_vec]
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:
         self.env_vec = env_v[2]
@@ -363,49 +370,51 @@ class RewardShaping(gym.Wrapper):
       info["scene"] = "downstair"
     else:
       info["scene"] = "plane"
-    info["vel"] = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
+    info["vel"] = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     info["d_yaw"] = kwargs["d_yaw"] if "d_yaw" in kwargs.keys() else 0
     donef = kwargs["donef"] if "donef" in kwargs.keys() else False
+    info["foot_position_world"] = self.get_foot_world(info)
     # get reward terms, stored in the "info"
     info = self.reward_shaping(obs, rew, done, info, action, donef)
-    done = self.terminate(info)
     rewards = 0
-    info["done"] = -1 * self.reward_param['done'] if done else 0
-    info["velx"] = rew * self.reward_param['velx']  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
     # sum the reward terms
     for key in Param_Dict.keys():
       if key in info.keys():
         # print(key)
         rewards += info[key]
-    self.last_basepose = copy(info["base"])
+    self.last_basepose = copy(info["base_position"])
+    self.last_contacts = copy(info["real_contact"])
     self.last_base10[1:, :] = self.last_base10[:9, :]
-    self.last_base10[0, :] = np.array(info["base"]).reshape(1, 3)
-    self.last_footposition = self.get_foot_world(info)
-    info["foot_position_world"] = copy(self.last_footposition)
+    self.last_base10[0, :] = np.array(info["base_position"]).reshape(1, 3)
     if self.render:
       self.pybullet_client.removeUserDebugItem(self.line_id)
       self.line_id = self.draw_direction(info)
     return (obs, self.reward_p * rewards, done, info)  # reward_p: default 5.0
 
   def reward_shaping(self, obs, rew, done, info, action, donef, last_basepose=None, last_footposition=None):
-    torso = self.re_torso(info, last_basepose=last_basepose)
-    info['torso'] = self.reward_param['torso'] * self.re_torso(info, last_basepose=last_basepose)  # base velocity
     if last_basepose is None:
-      v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
+      v = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
-      v = (np.array(info["base"]) - np.array(last_basepose)) / self.env.env_time_step
+      v = (np.array(info["base_position"]) - np.array(last_basepose)) / self.env.env_time_step
     k = 1 - self.c_prec(min(v[0], self.vel_d), self.vel_d, 0.5)
-    info['up'] = self.reward_param['up'] * self.re_up(info) * k  # roll and pitch
-    info['feet'] = self.reward_param['feet'] * self.re_feet(info, last_footposition=last_footposition)  # foot velocity
+    info['rew_torso'] = self.reward_param['rew_torso'] * self.re_torso(info, last_basepose=last_basepose)  # base velocity
+    info['rew_up'] = self.reward_param['rew_up'] * self.re_up(info) * k  # roll and pitch
+    info['rew_feet_vel'] = self.reward_param['rew_feet_vel'] * self.re_feet_velocity(info, last_footposition=last_footposition)  # foot velocity
+    info['rew_feet_airtime'] = self.reward_param['rew_feet_airtime'] * self.re_feet_air_time(info)
+    info['rew_velx'] = self.reward_param['rew_velx'] * rew  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
+    info['rew_actionrate'] = self.reward_param['rew_actionrate'] * self.re_action_rate(action, info)
     # discouraged terms
-    info['tau'] = -self.reward_param['tau'] * info["energy"] * k
-    info['badfoot'] = -self.reward_param['badfoot'] * self.robot.GetBadFootContacts()
+    info['rew_tau'] = -self.reward_param['rew_tau'] * info["energy"] * k
+    info['rew_badfoot'] = -self.reward_param['rew_badfoot'] * self.robot.GetBadFootContacts()
     lose_contact_num = np.sum(1.0 - np.array(info["real_contact"]))
-    info['footcontact'] = -self.reward_param['footcontact'] * max(lose_contact_num - 2, 0)
+    info['rew_footcontact'] = -self.reward_param['rew_footcontact'] * max(lose_contact_num - 2, 0)
+    done = self.terminate(info)
+    info['rew_done'] = -1 * self.reward_param['rew_done'] if done else 0
+    info['rew_feet_pos'] = -self.reward_param['rew_feet_pos'] * self.re_feet_position(info)
     return info
 
   def draw_direction(self, info):
-    pose = info['base']
+    pose = info["base_position"]
     if self.render:
       id = self.pybullet_client.addUserDebugLine(lineFromXYZ=[pose[0], pose[1], 0.6],
                                                  lineToXYZ=[pose[0] + np.cos(info['d_yaw']),
@@ -416,9 +425,9 @@ class RewardShaping(gym.Wrapper):
   def terminate(self, info):
     rot_mat = info["rot_mat"]
     pose = info["rot_euler"]
-    footposition = copy(info["footposition"])
+    footposition = copy(info["foot_position"])
     footz = footposition[:, -1]
-    base = info["base"]
+    base = info["base_position"]
     base_std = np.sum(np.std(self.last_base10, axis=0))
     return rot_mat[-1] < 0.5 or np.mean(footz) > -0.1 or np.max(footz) > 0 or (
           base_std <= 2e-4 and self.steps >= 10) or abs(pose[-1]) > 0.6
@@ -428,7 +437,7 @@ class RewardShaping(gym.Wrapper):
     return -energy
 
   def re_still(self, info):
-    v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
+    v = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     return -np.linalg.norm(v)
 
   def re_standupright(self, info):
@@ -437,7 +446,7 @@ class RewardShaping(gym.Wrapper):
     return self.re_rot(info, still + up)
 
   def re_up(self, info):
-    posex = info["base"][0]
+    posex = info["base_position"][0]
     env_vec = np.zeros(7)
     for env_v in info["env_info"]:
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:
@@ -468,10 +477,20 @@ class RewardShaping(gym.Wrapper):
     w = np.arctanh(np.sqrt(0.95)) / m
     return np.tanh(np.power((v - t) * w, 2))
 
-  def re_feet(self, info, vd=[1, 0, 0], last_footposition=None):
+  def re_action_rate(self, action, info):
+    new_action = np.array(info["real_action"])
+    if self.last_action[0] == 0.0:
+      self.last_action = new_action
+      return 0.0;
+    r = np.square(new_action - self.last_action)
+    r = np.sum(r, axis=0)
+    self.last_action = new_action
+    return 1 - self.c_prec(r, 0, 0.2)
+
+  def re_feet_velocity(self, info, vd=[1, 0, 0], last_footposition=None):
     vd[0] = np.cos(info['d_yaw'])
     vd[1] = np.sin(info['d_yaw'])
-    posex = info["base"][0]
+    posex = info["base_position"][0]
     env_vec = np.zeros(7)
     for env_v in info["env_info"]:
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:
@@ -499,11 +518,39 @@ class RewardShaping(gym.Wrapper):
       v_sum += min(r, 1.0 * r)
     return self.re_rot(info, v_sum)
 
+  def re_feet_air_time(self, info):
+    # Reward long steps
+    contact = np.array(copy(info["real_contact"]))
+    contact_filt = np.logical_or(contact, np.array(self.last_contacts))
+    first_contact = (self.feet_air_time > 0.) * contact_filt
+    self.feet_air_time += self.env.env_time_step
+    # if first_contact[0] == True:
+    #   print("contact!!!")
+    rew_airtime = -np.sum((self.feet_air_time - 0.5) * first_contact, axis=0)
+    self.feet_air_time *= ~contact_filt  # if last and current foot are both in air
+    return rew_airtime
+  
+  def re_feet_position(self, info):
+    # reward target foot position
+    contact = np.array(info["real_contact"])
+    contact_position = np.array(info["foot_position_world"])
+    first_contact = np.logical_xor(np.logical_or(self.last_contacts, np.array(self.last_contacts)), contact)
+    first_contact = np.repeat(first_contact.reshape(-1,1), 3, axis=1)
+    feet_fly_length = (contact_position - self.last_contact_position) * first_contact
+    rew_feet_length = 0
+    for i in range(first_contact.shape[0]):
+      if first_contact[i][0] == True:
+        feet_length_err = np.sum(np.square(feet_fly_length[i] - np.array([0.3, 0.0, 0.0])))
+        rew_feet_length += feet_length_err
+        self.last_contact_position[i] = contact_position[i]
+    rew_feet_length = self.c_prec(rew_feet_length, 0, 0.2)
+    return rew_feet_length
+
   def get_foot_world(self, info={}):
-    if "footposition" in info.keys():
-      foot = np.array(info["footposition"]).transpose()
+    if "foot_position" in info.keys():
+      foot = np.array(info["foot_position"]).transpose()
       rot_mat = np.array(info["rot_mat"]).reshape(-1, 3)
-      base = np.array(info["base"]).reshape(-1, 1)
+      base = np.array(info["base_position"]).reshape(-1, 1)
     else:
       foot = np.array(self.robot.GetFootPositionsInBaseFrame()).transpose()
       rot_quat = self.robot.GetBaseOrientation()
@@ -515,12 +562,12 @@ class RewardShaping(gym.Wrapper):
 
   def re_torso(self, info, vd=[1, 0, 0], last_basepose=None):
     if last_basepose is None:
-      v = (np.array(info["base"]) - np.array(self.last_basepose)) / self.env.env_time_step
+      v = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
-      v = (np.array(info["base"]) - np.array(last_basepose)) / self.env.env_time_step
+      v = (np.array(info["base_position"]) - np.array(last_basepose)) / self.env.env_time_step
     vd[0] = np.cos(info['d_yaw'])
     vd[1] = np.sin(info['d_yaw'])
-    posex = info["base"][0]
+    posex = info["base_position"][0]
     env_vec = np.zeros(7)
     for env_v in info["env_info"]:
       if posex + 0.2 >= env_v[0] and posex + 0.2 <= env_v[1]:

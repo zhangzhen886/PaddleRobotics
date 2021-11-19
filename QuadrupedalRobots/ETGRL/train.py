@@ -36,9 +36,6 @@ from matplotlib import pyplot as plt
 import rospy
 from sensor_msgs.msg import JointState
 
-rospy.init_node("etg_node")
-pub_joint = rospy.Publisher("joint_states", JointState, queue_size=100)
-
 WARMUP_STEPS = 1e4
 EVAL_EVERY_STEPS = 1e4
 ES_EVERY_STEPS = 5e4
@@ -58,7 +55,7 @@ SLOPE = np.arange(0.2, 0.401, 0.02)
 STEP_WIDTH = np.arange(0.26, 0.401, 0.02)
 default_pose = np.array([0, 0.9, -1.8] * 4)
 
-param = copy(Param_Dict)
+reward_param = copy(Param_Dict)
 random_param = copy(Random_Param_Dict)
 mode_map = {"pose"  : robot_config.MotorControlMode.POSITION,
             "torque": robot_config.MotorControlMode.TORQUE,
@@ -66,7 +63,7 @@ mode_map = {"pose"  : robot_config.MotorControlMode.POSITION,
 
 plt.rcParams['figure.dpi'] = 300
 
-def plot_gait(w, b, ETG, points):
+def plot_gait(w, b, ETG, points, save_path=None):
   w = np.vstack((w[0, ], w[-1, ]))
   b = np.hstack((b[0], b[-1]))
   t_t = np.arange(0.0, 0.50, 0.005)
@@ -80,13 +77,18 @@ def plot_gait(w, b, ETG, points):
   # plt.ylim(-0.1, 0.1)
   # plt.subplot(2,1,2)
   colors = t_t * 200
-  plt.scatter(points[:, 0], points[:, 1], c='r', alpha=0.5)
-  plt.scatter(p[50, 0], p[50, 1], c='b', alpha=1)
+  plt.figure(0)
+  plt.scatter(points[:, 0], points[:, 1], c='red', alpha=0.5)
+  plt.scatter(p[50, 0], p[50, 1], c='blue', alpha=1)
+  plt.scatter(p[0, 0], p[0, 1], c='blue', alpha=1)
   plt.scatter(p[:, 0], p[:, 1], s=10, c=colors, cmap='viridis')
-  plt.xlim(-0.1, 0.1)
-  plt.ylim(-0.05, 0.15)
+  plt.xlim(-0.15, 0.15)
+  plt.ylim(-0.10, 0.15)
   plt.tight_layout()
   # plt.colorbar()
+  if save_path is not None:
+    plot_path = save_path + '/etg.png'
+    plt.savefig(plot_path)
   plt.show()
 
 
@@ -113,7 +115,7 @@ def LS_sol(A, b, precision=1e-4, alpha=0.05, lamb=1, w0=None):
   return x
 
 
-def Opt_with_points(ETG, ETG_T=0.4, points=None, b0=None, w0=None, precision=1e-4, lamb=0.5, plot=False, **kwargs):
+def Opt_with_points(ETG, ETG_T=0.4, points=None, b0=None, w0=None, precision=1e-4, lamb=0.5, **kwargs):
   ts = [0.5 * ETG_T + 0.1, 0, 0.05, 0.1, 0.15, 0.2]
   if points is None:
     Steplength = kwargs["Steplength"] if "Steplength" in kwargs else 0.05
@@ -143,8 +145,7 @@ def Opt_with_points(ETG, ETG_T=0.4, points=None, b0=None, w0=None, precision=1e-
     x2 = LS_sol(A=obs, b=points_t[:, 1].reshape(-1, 1), precision=precision, alpha=0.05, lamb=lamb,
                 w0=w0[-1, :].reshape(-1, 1))
   w = np.stack((x1, x2), axis=0).reshape(2, -1)  # 2x20
-  # if plot:
-  plot_gait(w, b, ETG, points)
+  # plot_gait(w, b, ETG, points)
   w_ = np.stack((x1, np.zeros((20, 1)), x2), axis=0).reshape(3, -1)  # 3x20
   b_ = np.array([b[0], 0, b[1]])  # 3x1
   return w_, b_, points
@@ -198,7 +199,7 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
           infos[key] = info[key]
         else:
           infos[key] += info[key]
-    if info["velx"] >= 0.3:
+    if info["rew_velx"] >= 0.3:
       success_num += 1
     # Store data in replay memory
     rpm.append(obs, action, reward, next_obs, terminal)
@@ -225,49 +226,63 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
 
 # Runs policy for 5 episodes by default and returns average reward
 # A fixed seed is used for the eval environment
-def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None):
+def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pub_joint=None):
   avg_reward = 0.
   infos = {}
   steps_all = 0
   obs, info = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
   done = False
   steps = 0
+  step_time_all = 0.0
+  plt.ion()
+  plt.figure(1)
+
   while True:
     steps += 1
-    t0 = time.clock()
+    t0 = time.time()
     action = agent.predict(obs)  # NN output: residual control signal
-    t1 = time.clock() - t0
+    t1 = time.time()
+    pred_time = t1 - t0
+    # print("pred time:", pred_time)
     new_action = action
-    new_action = np.zeros(12)
+    # new_action = np.zeros(12)
     obs, reward, done, info = env.step(new_action * action_bound, donef=(steps > max_step))
-    # if args.eval == 1:
-    # img=p.getCameraImage(640, 480, renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
-    # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB )
-    # cv2.imwrite("img/img{}.jpg".format(steps),img)
-    # print("pred time:", t1)
+    if args.eval == 1:
+      img=p.getCameraImage(640, 480, renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
+      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+      cv2.imwrite("img/img{}.jpg".format(steps),img)
+    t2 = time.time()
+    step_time = t2 - t1
+    step_time_all += step_time
     avg_reward += reward
-    t2 = time.clock() - t0
     # print("step time:", t2)
-    joint_msg = JointState()
-    joint_msg.name.append("torso_to_abduct_fr_j")
-    joint_msg.name.append("abduct_fr_to_thigh_fr_j")
-    joint_msg.name.append("thigh_fr_to_knee_fr_j")
-    joint_msg.name.append("torso_to_abduct_fl_j")
-    joint_msg.name.append("abduct_fl_to_thigh_fl_j")
-    joint_msg.name.append("thigh_fl_to_knee_fl_j")
-    joint_msg.name.append("torso_to_abduct_hr_j")
-    joint_msg.name.append("abduct_hr_to_thigh_hr_j")
-    joint_msg.name.append("thigh_hr_to_knee_hr_j")
-    joint_msg.name.append("torso_to_abduct_hl_j")
-    joint_msg.name.append("abduct_hl_to_thigh_hl_j")
-    joint_msg.name.append("thigh_hl_to_knee_hl_j")
-    for i in range(0, 12):
-      joint_msg.position.append(info['real_action'][i])
-    for i in range(0, 12):
-      joint_msg.position.append((info['ETG_act'] + info['init_act'])[i])
-    joint_msg.header.stamp = rospy.Time.now()
-    joint_msg.header.frame_id = "robot"
-    pub_joint.publish(joint_msg)
+    if pub_joint is not None:
+      joint_msg = JointState()
+      joint_msg.name.append("torso_to_abduct_fr_j")
+      joint_msg.name.append("abduct_fr_to_thigh_fr_j")
+      joint_msg.name.append("thigh_fr_to_knee_fr_j")
+      joint_msg.name.append("torso_to_abduct_fl_j")
+      joint_msg.name.append("abduct_fl_to_thigh_fl_j")
+      joint_msg.name.append("thigh_fl_to_knee_fl_j")
+      joint_msg.name.append("torso_to_abduct_hr_j")
+      joint_msg.name.append("abduct_hr_to_thigh_hr_j")
+      joint_msg.name.append("thigh_hr_to_knee_hr_j")
+      joint_msg.name.append("torso_to_abduct_hl_j")
+      joint_msg.name.append("abduct_hl_to_thigh_hl_j")
+      joint_msg.name.append("thigh_hl_to_knee_hl_j")
+      for i in range(0, 12):
+        joint_msg.position.append(info['real_action'][i])
+      # for i in range(0, 12):
+      #   joint_msg.position.append((info['ETG_act'] + info['init_act'])[i])
+      joint_msg.header.stamp = rospy.Time.now()
+      joint_msg.header.frame_id = "robot"
+      pub_joint.publish(joint_msg)
+      # plt.ylim(0.0, 0.1)
+      # if info["real_contact"][0] == True:
+      #   plt.scatter(info["foot_position_world"][0][0], info["foot_position_world"][0][2], s=5, c='red')
+      # else:
+      #   plt.scatter(info["foot_position_world"][0][0], info["foot_position_world"][0][2], s=5, c='blue')
+      # plt.pause(0.0001)
     for key in Param_Dict.keys():
       if key in info.keys():
         if key not in infos.keys():
@@ -277,6 +292,7 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None):
     if steps > max_step:
       break
   steps_all += steps
+  logger.info("[Evaluation] Average step time: {} step/second".format(steps_all/step_time_all))
   return avg_reward, steps_all, infos
 
 
@@ -305,7 +321,7 @@ def run_EStrain_episode(agent, env, rpm, max_step, action_bound, w=None, b=None)
           infos[key] = info[key]
         else:
           infos[key] += info[key]
-    if info["velx"] >= 0.3:
+    if info["rew_velx"] >= 0.3:
       success_num += 1
     # Store data in replay memory
     if args.es_rpm:
@@ -323,13 +339,13 @@ def run_EStrain_episode(agent, env, rpm, max_step, action_bound, w=None, b=None)
 def main():
   random_param['random_dynamics'] = args.random_dynamic
   random_param['random_force'] = args.random_force
-  param['torso'] = args.torso
-  param['feet'] = args.feet
-  param['up'] = args.up
-  param['tau'] = args.tau
-  param['stand'] = args.stand
-  param['badfoot'] = args.badfoot
-  param['footcontact'] = args.footcontact
+  # reward_param['rew_torso'] = args.torso
+  # reward_param['rew_up'] = args.up
+  # reward_param['rew_tau'] = args.tau
+  # reward_param['rew_feet_vel'] = args.feet
+  # reward_param['rew_stand'] = args.stand
+  # reward_param['rew_badfoot'] = args.badfoot
+  # reward_param['rew_footcontact'] = args.footcontact
   sensor_mode = copy(SENSOR_MODE)
   sensor_mode['dis'] = args.sensor_dis
   sensor_mode['motor'] = args.sensor_motor
@@ -352,12 +368,12 @@ def main():
 
   ##ES init
   if os.path.exists(args.ETG_path):
-    ETG_info = np.load(args.ETG_pat+h)
+    ETG_info = np.load(args.ETG_path)
     ETG_param_init = ETG_info["param"].reshape(-1)
     print("ETG_param_init:", ETG_param_init.shape)
   else:
     args.ETG_path = "data/zero_param.npz"
-    ETG_param_init = np.zeros(12)
+    ETG_param_init = np.zeros(12)  # dim: 6(points)*2(x&y)
   ES_solver = SimpleGA(ETG_param_init.shape[0],
                        sigma_init=args.sigma,
                        sigma_decay=args.sigma_decay,
@@ -373,27 +389,28 @@ def main():
   # prior_points: 6x2 [[0.0, -0.01], [-0.05, -0.005], [-0.075, 0.06], [0.0, 0.1], [0.075, 0.06], [0.05, -0.005]]
   w0, b0, prior_points = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T,
                                          Footheight=args.footheight, Steplength=args.steplen)
+  # if args.suffix == 'debug':
+  #   plot_gait(w0, b0, ETG_agent, prior_points)
   if not os.path.exists(args.ETG_path):
     np.savez(args.ETG_path, w=w0, b=b0, param=prior_points)
+
   dynamic_param = np.load("data/sigma0.5_exp0_dynamic_param9027.npy")
   dynamic_param = param2dynamic_dict(dynamic_param)
-
   env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode, render=render,
                              on_rack=False, sensor_mode=sensor_mode, normal=args.normal,
-                             reward_param=param, random_param=random_param, dynamic_param=dynamic_param,
+                             reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                              ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=args.ETG_path,
                              vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
                              enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
   e_step = args.e_step
   obs_dim = env.observation_space.shape[0]
   action_dim = env.action_space.shape[0]
-  print('obs_dim:', obs_dim)
-  act_bound_now = args.act_bound
   if args.act_mode == "pose":
     act_bound = np.array([0.1, 0.7, 0.7] * 4)
   elif args.act_mode == "torque":
     act_bound = np.array([10] * 12)
   elif args.act_mode == "traj":
+    act_bound_now = args.act_bound
     act_bound = np.array([act_bound_now, act_bound_now, act_bound_now] * 4)  # 0.3*12
 
   # Initialize RL model, algorithm, agent, replay_memory
@@ -420,12 +437,14 @@ def main():
       os.makedirs(outdir)
     logger.set_dir(outdir)
     logger.info('args:{}'.format(args))
+    logger.info("obs_dim: {}, act_dim: {}".format(obs_dim, action_dim))
+    logger.info("reward param: {}".format(reward_param))
+    logger.info("dynamic param: {}".format(dynamic_param))
     total_steps = 0
     test_flag = 0
     ES_test_flag = 0
     t_steps = 0
-
-    # init w,b
+    # init w,b(linear layer params)
     ETG_best_param = ES_solver.get_best_param()
     points_add = ETG_best_param.copy().reshape(-1, 2)
     new_points = prior_points + points_add
@@ -436,12 +455,10 @@ def main():
       episode_reward, episode_step, info = run_train_episode(RL_agent, env, rpm, e_step, act_bound, w, b)
       total_steps += episode_step
       t_steps += episode_step
-      summary.add_scalar('train/episode_reward', episode_reward,
-                         total_steps)
-      summary.add_scalar('train/episode_step', episode_step,
-                         total_steps)
+      summary.add_scalar('train/episode_reward', episode_reward, total_steps)
+      summary.add_scalar('train/episode_step', episode_step, total_steps)
       for key in info.keys():
-        if info[key] != 0:
+        # if info[key] != 0:
           summary.add_scalar('train/episode_{}'.format(key), info[key], total_steps)
           summary.add_scalar('train/mean_{}'.format(key), info[key] / episode_step, total_steps)
       logger.info('[Training] Total Steps: {} Reward: {}'.format(
@@ -452,26 +469,22 @@ def main():
         while (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
           test_flag += 1
           avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b)
-          logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
-            EVAL_EPISODES, avg_reward, avg_step))
-          summary.add_scalar('eval/episode_reward', avg_reward,
-                             total_steps)
-          summary.add_scalar('eval/episode_step', avg_step,
-                             total_steps)
+          summary.add_scalar('eval/episode_reward', avg_reward, total_steps)
+          summary.add_scalar('eval/episode_step', avg_step, total_steps)
           for key in info.keys():
-            if info[key] != 0:
-              summary.add_scalar('eval/episode_{}'.format(key), info[key], total_steps)
-              summary.add_scalar('eval/mean_{}'.format(key), info[key] / avg_step, total_steps)
+            summary.add_scalar('eval/episode_{}'.format(key), info[key], total_steps)
+            summary.add_scalar('eval/mean_{}'.format(key), info[key] / avg_step, total_steps)
+          logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
+            total_steps, avg_reward, avg_step))
         if e_step < 600:
           e_step += 50
+        # save RL_agent(SAC) params and ETG(w,b) params
         path = os.path.join(outdir, 'itr_{:d}.pt'.format(int(total_steps)))
-        # if not os.path.exists(path):
-        #     os.mkdir(path)
         RL_agent.save(path)
         np.savez(os.path.join(outdir, 'itr_{:d}.npz'.format(int(total_steps))), w=w, b=b, param=ETG_best_param)
 
       # ES episode, ES_EVERY_STEPS=50000, WARMUP_STEPS=10000
-      if args.ES and (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag and total_steps >= WARMUP_STEPS:
+      if args.ES and args.ETG and (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag and total_steps >= WARMUP_STEPS:
         while (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag:
           ES_test_flag += 1
           best_reward, avg_step, info = run_EStrain_episode(RL_agent, env, rpm, 400, act_bound, w, b)
@@ -486,8 +499,9 @@ def main():
             for solution in solutions:
               points_add = solution.reshape(-1, 2)
               new_points = prior_points + points_add
-              # if args.suffix is 'debug':
               w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
+              if args.suffix is 'debug':
+                plot_gait(w, b, ETG_agent, new_points)
               episode_reward, episode_step, info = run_EStrain_episode(RL_agent, env, rpm, 400, act_bound, w, b)
               fitness_list.append(episode_reward)
               steps.append(episode_step)
@@ -504,7 +518,7 @@ def main():
             ES_step += 1
             sigma = np.mean(results[3])
             logger.info('[ESSteps: {}] Reward: {} step: {}  sigma:{}'.format(ES_step, np.max(fitness_list),
-                                                                             np.mean(steps), sig))
+                                                                             np.mean(steps), sigma))
             summary.add_scalar('ES/sigma', sigma, ES_step)
             summary.add_scalar('ES/episode_reward', np.mean(fitness_list), ES_step)
             summary.add_scalar('ES/episode_minre', np.min(fitness_list), ES_step)
@@ -513,14 +527,16 @@ def main():
             summary.add_scalar('ES/episode_length', np.mean(steps), ES_step)
             for key in Param_Dict.keys():
               if infos[key] != 0:
-                summary.add_scalar('train/episode_{}'.format(key), infos[key], ES_step)
-                summary.add_scalar('train/mean_{}'.format(key), infos[key] / np.mean(steps), ES_step)
+                summary.add_scalar('ES/episode_{}'.format(key), infos[key], ES_step)
+                summary.add_scalar('ES/mean_{}'.format(key), infos[key] / np.mean(steps), ES_step)
         ETG_best_param = best_param
         points_add = ETG_best_param.reshape(-1, 2)
         new_points = prior_points + points_add
         w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
         ES_solver.reset(ETG_best_param)
   elif args.eval == 1:
+    rospy.init_node("etg_eval_node")
+    pub_joint = rospy.Publisher("joint_states", JointState, queue_size=100)
     ETG_info = np.load(args.load[:-3] + ".npz")
     w = ETG_info["w"]
     b = ETG_info["b"]
@@ -529,13 +545,12 @@ def main():
     outdir = os.path.join(args.load[:-3], args.task_mode)
     if not os.path.exists(args.load[:-3]):
       os.makedirs(args.load[:-3])
-    plot_gait(w, b, ETG_agent, prior_points)
-    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 1500, act_bound, w, b)
+    plot_gait(w, b, ETG_agent, prior_points, args.load[:-3])
+    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b, pub_joint)
     # record a video for debuging
-    # os.system("ffmpeg -r 38 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
-    # os.system("rm -rf img/*")
-    logger.info('Evaluation over: {} episodes, Reward: {} Steps: {}'.format(
-      EVAL_EPISODES, avg_reward, avg_step))
+    os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
+    os.system("rm -rf img/*")
+    logger.info('[Evaluation] Reward: {} Steps: {}'.format(avg_reward, avg_step))
 
 
 if __name__ == "__main__":
@@ -569,12 +584,12 @@ if __name__ == "__main__":
   parser.add_argument("--ETG_path", type=str, default="None")
   parser.add_argument("--ETG_H", type=int, default=20)
   parser.add_argument("--stand", type=float, default=0)
-  parser.add_argument("--torso", type=float, default=1.5)
-  parser.add_argument("--up", type=float, default=0.6)
-  parser.add_argument("--tau", type=float, default=0.07)
-  parser.add_argument("--feet", type=float, default=0.3)
-  parser.add_argument("--badfoot", type=float, default=0.1)
-  parser.add_argument("--footcontact", type=float, default=0.1)
+  parser.add_argument("--rew_torso", type=float, default=1.5)
+  parser.add_argument("--rew_up", type=float, default=0.6)
+  parser.add_argument("--rew_tau", type=float, default=0.07)
+  parser.add_argument("--rew_feet_vel", type=float, default=0.3)
+  parser.add_argument("--rew_badfoot", type=float, default=0.1)
+  parser.add_argument("--rew_footcontact", type=float, default=0.1)
   parser.add_argument("--act_bound", type=float, default=0.3)
   parser.add_argument("--sensor_dis", type=int, default=1)
   parser.add_argument("--sensor_motor", type=int, default=1)
@@ -593,6 +608,6 @@ if __name__ == "__main__":
   parser.add_argument("--ES", type=int, default=1)
   parser.add_argument("--es_rpm", type=int, default=1, help='ES training store into RPM for SAC')
   parser.add_argument("--x_noise", type=int, default=0)
-  parser.add_argument("--action_repeat_num", type=int, default=13)
+  parser.add_argument("--action_repeat_num", type=int, default=5)
   args = parser.parse_args()
   main()

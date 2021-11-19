@@ -114,7 +114,7 @@ def run_train_episode(agent, env, rpm,max_step,action_bound,ref_agent=None,total
                     infos[key] = info[key]
                 else:
                     infos[key] += info[key]
-        if info["velx"]>=0.3:
+        if info["rew_velx"]>=0.3:
             success_num +=1
         # Store data in replay memory
         rpm.append(agent_obs, ref_obs)

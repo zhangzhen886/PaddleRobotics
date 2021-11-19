@@ -132,6 +132,7 @@ def run_episode(env,max_step,w=None,b=None):
     done = False
     episode_reward, episode_steps = 0, 0
     infos = {}
+    success_num = 0
     while not done:
         episode_steps += 1
         # Perform action
@@ -144,7 +145,7 @@ def run_episode(env,max_step,w=None,b=None):
                     infos[key] = info[key]
                 else:
                     infos[key] += info[key]
-        if info["velx"]>=0.3:
+        if info["rew_velx"]>=0.3:
             success_num +=1
         # Store data in replay memory
         obs = next_obs

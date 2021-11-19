@@ -457,8 +457,8 @@ class LocomotionGymEnv(gym.Env):
     info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
     info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
     info["drpy"] = self._robot.GetBaseRollPitchYawRate()
-    info["base"] = self._robot.GetBasePosition()
-    info["footposition"] = self._robot.GetFootPositionsInBaseFrame()
+    info["base_position"] = self._robot.GetBasePosition()
+    info["foot_position"] = self._robot.GetFootPositionsInBaseFrame()
     info["real_contact"] = self._robot.GetFootContacts()
     info["joint_angle"] = self._robot.GetMotorAngles()
     info["env_info"] = self.env_info
@@ -557,8 +557,8 @@ class LocomotionGymEnv(gym.Env):
     info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
     info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
     info["drpy"] = self._robot.GetBaseRollPitchYawRate()
-    info["base"] = self._robot.GetBasePosition()
-    info["footposition"] = self._robot.GetFootPositionsInBaseFrame()
+    info["base_position"] = self._robot.GetBasePosition()
+    info["foot_position"] = self._robot.GetFootPositionsInBaseFrame()
     info["real_contact"] = self._robot.GetFootContacts()
     info["joint_angle"] = self._robot.GetMotorAngles()
     info["env_info"] = self.env_info  # [lastx, basex, env_vec] in "upstair_terrain"
