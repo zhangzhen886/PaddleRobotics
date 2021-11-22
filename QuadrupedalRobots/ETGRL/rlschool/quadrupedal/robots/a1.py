@@ -387,17 +387,17 @@ class A1(minitaur.Minitaur):
 
   def _BuildUrdfIds(self):
     """Build the link Ids from its name in the URDF file.
-
+       Called in the "Reset()" func
     Raises:
       ValueError: Unknown category of the joint name.
     """
-    num_joints = self.pybullet_client.getNumJoints(self.quadruped)
-    self._hip_link_ids = [-1]
-    self._leg_link_ids = []
-    self._motor_link_ids = []
-    self._lower_link_ids = []
-    self._foot_link_ids = []
-    self._imu_link_ids = []
+    num_joints = self.pybullet_client.getNumJoints(self.quadruped)  # 21=4*5+1
+    self._hip_link_ids = [-1]  # '_hip_joint, _hip_fixed': 1, 2, 6, 7, 11, 12, 16, 17
+    self._leg_link_ids = []  # 4, 5, 9, 10, 14, 15, 19, 20
+    self._motor_link_ids = []  # '_upper_joint': 3, 8, 13, 18
+    self._lower_link_ids = []  # 'lower_joint': 4, 9, 14, 19
+    self._foot_link_ids = []  # '_toe_fixed': 5, 10, 15, 20
+    self._imu_link_ids = []  # 0
 
     for i in range(num_joints):
       joint_info = self.pybullet_client.getJointInfo(self.quadruped, i)
@@ -531,10 +531,10 @@ class A1(minitaur.Minitaur):
     # as the angles.
     return joint_position_idxs, joint_angles.tolist()
 
-  def GetFootPositionsInBaseFrame(self):
-    """Get the robot's foot position in the base frame."""
-    motor_angles = self.GetMotorAngles()
-    return foot_positions_in_base_frame(motor_angles)
+  # def GetFootPositionsInBaseFrame(self):
+  #   """Get the robot's foot position in the base frame."""
+  #   motor_angles = self.GetMotorAngles()
+  #   return foot_positions_in_base_frame(motor_angles)
 
   def ComputeJacobian(self, leg_id):
     """Compute the Jacobian for a given leg."""

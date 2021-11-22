@@ -78,7 +78,7 @@ def link_position_in_base_frame(
   link_position = link_state[0]
   link_local_position, _ = robot.pybullet_client.multiplyTransforms(
       inverse_translation, inverse_rotation, link_position, (0, 0, 0, 1))
-  link_local_position = [0]*3
+  # link_local_position = [0]*3
   return np.array(link_local_position)
 
 

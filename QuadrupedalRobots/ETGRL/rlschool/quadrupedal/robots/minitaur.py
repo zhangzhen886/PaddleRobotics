@@ -230,7 +230,7 @@ class Minitaur(object):
     return self._step_counter * self.time_step
 
   def _StepInternal(self, action, motor_control_mode):
-    t =self.ApplyAction(action, motor_control_mode)
+    t = self.ApplyAction(action, motor_control_mode)
     # print('torques',t)
     self._pybullet_client.stepSimulation()
     self.ReceiveObservation()
@@ -742,6 +742,14 @@ class Minitaur(object):
           ))
     return np.array(foot_positions)
 
+  def GetFootPositionsInWorldFrame(self):
+    assert len(self._foot_link_ids) == self.num_legs
+    foot_positions = []
+    for foot_id in self.GetFootLinkIDs():
+      link_state = self.pybullet_client.getLinkState(self.quadruped, foot_id)
+      foot_positions.append(link_state[0])
+    return np.array(foot_positions)
+
   def GetTrueMotorAngles(self):
     """Gets the eight motor angles at the current moment, mapped to [-pi, pi].
 
@@ -921,7 +929,7 @@ class Minitaur(object):
 
     motor_commands = np.asarray(motor_commands)
 
-    q, qdot = self._GetPDObservation()
+    q, qdot = self._GetPDObservation()  # MotorAngles and MotorVelocities
     qdot_true = self.GetTrueMotorVelocities()
     # raise NotImplementedError
     # print('control_mode:',control_mode)
@@ -1185,7 +1193,7 @@ class Minitaur(object):
 
   def ReceiveObservation(self):
     """Receive the observation from sensors.
-
+    called in "_StepInternal()", after "pybullet_client.stepSimulation()"
     This function is called once per step. The observations are only updated
     when this function is called.
     """
@@ -1230,8 +1238,8 @@ class Minitaur(object):
 
   def _GetPDObservation(self):
     pd_delayed_observation = self._GetDelayedObservation(self._pd_latency)
-    q = pd_delayed_observation[0:self.num_motors]
-    qdot = pd_delayed_observation[self.num_motors:2 * self.num_motors]
+    q = pd_delayed_observation[0:self.num_motors]  # 0~12, MotorAngles
+    qdot = pd_delayed_observation[self.num_motors:2 * self.num_motors]  # 12~24, MotorVelocities
     return (np.array(q), np.array(qdot))
 
   def _GetControlObservation(self):
