@@ -12,26 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import time
+from copy import copy
 import torch
 import numpy as np
 import gym
+import pybullet as p
+import cv2
 import argparse
-from parl.utils import logger, summary, ReplayMemory
+import logging
+import json
+from matplotlib import pyplot as plt
+import wandb
+
+from parl.utils import summary, ReplayMemory
 from model.mujoco_model import MujocoModel
 from model.mujoco_agent import MujocoAgent
 from alg.sac import SAC
+from alg.es import SimpleGA
 # import rlschool
 import rlschool.quadrupedal as quadrupedal
 from rlschool.quadrupedal.envs.utilities.ETG_model import ETG_layer, ETG_model
 from rlschool.quadrupedal.envs.env_wrappers.MonitorEnv import Param_Dict, Random_Param_Dict
 from rlschool.quadrupedal.robots import robot_config
 from rlschool.quadrupedal.envs.env_builder import SENSOR_MODE
-from copy import copy
-import pybullet as p
-import cv2
-import time
-from alg.es import SimpleGA
-from matplotlib import pyplot as plt
 
 import rospy
 from sensor_msgs.msg import JointState
@@ -207,7 +211,7 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     episode_reward += reward
     # Train agent after collecting sufficient data, off-policy actor-critic algorithm
     if rpm.size() >= WARMUP_STEPS:
-      # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE))
+      # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE)), BATCH_SIZE=256
       batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
       critic_loss, actor_loss = agent.learn(
         batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
@@ -292,7 +296,7 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pu
     if steps > max_step:
       break
   steps_all += steps
-  logger.info("[Evaluation] Average step time: {} step/second".format(steps_all/step_time_all))
+  # logger.info("[Evaluation] Average step time: {} step/second".format(steps_all/step_time_all))
   return avg_reward, steps_all, infos
 
 
@@ -367,12 +371,16 @@ def main():
   mode = mode_map[args.act_mode]
 
   ##ES init
-  if os.path.exists(args.ETG_path):
-    ETG_info = np.load(args.ETG_path)
+  ETG_path = ''
+  if args.resume != "":  # resume mode
+    ETG_path = args.resume + ".npz"
+  elif args.ETG_path != "":
+    ETG_path = args.ETG_path
+  if os.path.exists(ETG_path):
+    ETG_info = np.load(ETG_path)
     ETG_param_init = ETG_info["param"].reshape(-1)
-    print("ETG_param_init:", ETG_param_init.shape)
   else:
-    args.ETG_path = "data/zero_param.npz"
+    ETG_path = "data/zero_param.npz"
     ETG_param_init = np.zeros(12)  # dim: 6(points)*2(x&y)
   ES_solver = SimpleGA(ETG_param_init.shape[0],
                        sigma_init=args.sigma,
@@ -391,18 +399,18 @@ def main():
                                          Footheight=args.footheight, Steplength=args.steplen)
   # if args.suffix == 'debug':
   #   plot_gait(w0, b0, ETG_agent, prior_points)
-  if not os.path.exists(args.ETG_path):
-    np.savez(args.ETG_path, w=w0, b=b0, param=prior_points)
+  # if not os.path.exists(ETG_path):
+  #   np.savez(ETG_path, w=w0, b=b0, param=prior_points)
 
   dynamic_param = np.load("data/sigma0.5_exp0_dynamic_param9027.npy")
   dynamic_param = param2dynamic_dict(dynamic_param)
   env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode, render=render,
                              on_rack=False, sensor_mode=sensor_mode, normal=args.normal,
                              reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
-                             ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=args.ETG_path,
+                             ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
                              vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
                              enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
-  e_step = args.e_step
+
   obs_dim = env.observation_space.shape[0]
   action_dim = env.action_space.shape[0]
   if args.act_mode == "pose":
@@ -423,44 +431,70 @@ def main():
     actor_lr=ACTOR_LR,
     critic_lr=CRITIC_LR)
   RL_agent = MujocoAgent(algorithm)
-  if len(args.load) > 0:
+  if args.resume != "":  # resume mode
+    RL_agent.restore(args.resume+".pt")
+  elif args.load != "":
     RL_agent.restore(args.load)
   rpm = ReplayMemory(max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
 
   # training mode
   if not args.eval:
-    suffix = args.suffix + '_' + args.task_mode
-    outdir = os.path.join(args.outdir, suffix)
     if not os.path.exists(args.outdir):
       os.makedirs(args.outdir)
-    if not os.path.exists(outdir):
+    suffix = args.suffix + '_' + args.task_mode
+    outdir = os.path.join(args.outdir, suffix)
+    if not os.path.exists(outdir) and args.resume == "":
       os.makedirs(outdir)
-    logger.set_dir(outdir)
-    logger.info('args:{}'.format(args))
+      args_file = os.path.join(outdir, 'parse_args')
+      with open(args_file, 'w') as f: json.dump(args.__dict__, f, indent=2)
+    if args.resume != "":
+      outdir = os.path.split(args.resume)[0]
+    # logger.set_dir(outdir)
+    logging.basicConfig(filename=os.path.join(outdir, 'log.log'), level=logging.DEBUG,
+                        format='[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.info("---------------------------------------------------------------------------------")
+    logger.info("*********************************************************************************")
+    logger.info("args:{}".format(args))
     logger.info("obs_dim: {}, act_dim: {}".format(obs_dim, action_dim))
     logger.info("reward param: {}".format(reward_param))
     logger.info("dynamic param: {}".format(dynamic_param))
-    total_steps = 0
-    test_flag = 0
-    ES_test_flag = 0
-    t_steps = 0
+    logger.info("sensor mode: {}".format(sensor_mode))
+
+    config = dict(
+      outdir=outdir,
+      task_mode=args.task_mode,
+      obs_dim=obs_dim,
+      resume=args.resume,
+      etg_path=ETG_path,
+      load_path=args.load,
+    )
+    wandb.init(project="ETG_RL", entity="zhenz1996", config=config)
+
     # init w,b(linear layer params)
     ETG_best_param = ES_solver.get_best_param()
     points_add = ETG_best_param.copy().reshape(-1, 2)
     new_points = prior_points + points_add
     w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
+
+    e_step = args.e_step
+    total_steps = 0
+    test_flag = 0
+    ES_test_flag = 0
+    if args.resume != "":
+      total_steps = int(os.path.split(args.resume)[1][4:])
+      test_flag = (total_steps + 1) // EVAL_EVERY_STEPS
+      ES_test_flag = (total_steps + 1) // ES_EVERY_STEPS
     ES_step = 0
     while total_steps < args.max_steps:
       # Train episode
       episode_reward, episode_step, info = run_train_episode(RL_agent, env, rpm, e_step, act_bound, w, b)
       total_steps += episode_step
-      t_steps += episode_step
-      summary.add_scalar('train/episode_reward', episode_reward, total_steps)
-      summary.add_scalar('train/episode_step', episode_step, total_steps)
+      wandb.log({'train/episode_reward': episode_reward}, step=total_steps)
+      wandb.log({'train/episode_step': episode_step}, step=total_steps)
       for key in info.keys():
-        # if info[key] != 0:
-          summary.add_scalar('train/episode_{}'.format(key), info[key], total_steps)
-          summary.add_scalar('train/mean_{}'.format(key), info[key] / episode_step, total_steps)
+        wandb.log({'train/episode_{}'.format(key): info[key]}, step=total_steps)
+        wandb.log({'train/mean_{}'.format(key): info[key] / episode_step}, step=total_steps)
       logger.info('[Training] Total Steps: {} Reward: {}'.format(
         total_steps, episode_reward))
 
@@ -469,11 +503,11 @@ def main():
         while (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
           test_flag += 1
           avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b)
-          summary.add_scalar('eval/episode_reward', avg_reward, total_steps)
-          summary.add_scalar('eval/episode_step', avg_step, total_steps)
+          wandb.log({'eval/episode_reward': avg_reward}, step=total_steps)
+          wandb.log({'eval/episode_step': avg_step}, step=total_steps)
           for key in info.keys():
-            summary.add_scalar('eval/episode_{}'.format(key), info[key], total_steps)
-            summary.add_scalar('eval/mean_{}'.format(key), info[key] / avg_step, total_steps)
+            wandb.log({'eval/episode_{}'.format(key): info[key]}, step=total_steps)
+            wandb.log({'eval/mean_{}'.format(key): info[key] / avg_step}, step=total_steps)
           logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
             total_steps, avg_reward, avg_step))
         if e_step < 600:
@@ -519,16 +553,15 @@ def main():
             sigma = np.mean(results[3])
             logger.info('[ESSteps: {}] Reward: {} step: {}  sigma:{}'.format(ES_step, np.max(fitness_list),
                                                                              np.mean(steps), sigma))
-            summary.add_scalar('ES/sigma', sigma, ES_step)
-            summary.add_scalar('ES/episode_reward', np.mean(fitness_list), ES_step)
-            summary.add_scalar('ES/episode_minre', np.min(fitness_list), ES_step)
-            summary.add_scalar('ES/episode_maxre', np.max(fitness_list), ES_step)
-            summary.add_scalar('ES/episode_restd', np.std(fitness_list), ES_step)
-            summary.add_scalar('ES/episode_length', np.mean(steps), ES_step)
+            wandb.log({'ES/sigma': sigma}, step=ES_step)
+            wandb.log({'ES/episode_reward': np.mean(fitness_list)}, step=ES_step)
+            wandb.log({'ES/episode_minre': np.min(fitness_list)}, step=ES_step)
+            wandb.log({'ES/episode_maxre': np.max(fitness_list)}, step=ES_step)
+            wandb.log({'ES/episode_restd': np.std(fitness_list)}, step=ES_step)
+            wandb.log({'ES/episode_length': np.mean(steps)}, step=ES_step)
             for key in Param_Dict.keys():
-              if infos[key] != 0:
-                summary.add_scalar('ES/episode_{}'.format(key), infos[key], ES_step)
-                summary.add_scalar('ES/mean_{}'.format(key), infos[key] / np.mean(steps), ES_step)
+              wandb.log({'ES/episode_{}'.format(key): info[key]}, step=ES_step)
+              wandb.log({'ES/mean_{}'.format(key): infos[key] / np.mean(steps)}, step=ES_step)
         ETG_best_param = best_param
         points_add = ETG_best_param.reshape(-1, 2)
         new_points = prior_points + points_add
@@ -538,6 +571,7 @@ def main():
     rospy.init_node("etg_eval_node")
     pub_joint = rospy.Publisher("joint_states", JointState, queue_size=100)
     ETG_info = np.load(args.load[:-3] + ".npz")
+    RL_agent.restore(args.load[:-3] + ".pt")
     w = ETG_info["w"]
     b = ETG_info["b"]
     # w = w0
@@ -550,12 +584,18 @@ def main():
     # record a video for debuging
     os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     os.system("rm -rf img/*")
-    logger.info('[Evaluation] Reward: {} Steps: {}'.format(avg_reward, avg_step))
+    print('[Evaluation] Reward: {} Steps: {}'.format(avg_reward, avg_step))
 
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
+  parser.add_argument("--resume", type=str, default="")
+  parser.add_argument("--load", type=str, default="", help="Directory to load agent from.")
+  parser.add_argument("--eval", type=int, default=0, help="Evaluate or not")
+  parser.add_argument("--render", type=int, default=0, help="render or not")
   parser.add_argument("--outdir", type=str, default="train_log")
+  parser.add_argument("--suffix", type=str, default="exp0")
+  parser.add_argument("--task_mode", type=str, default="stairstair")
   parser.add_argument("--max_steps", type=int, default=1e7)
   parser.add_argument("--epsilon", type=float, default=0.4)
   parser.add_argument("--gamma", type=float, default=0.95)
@@ -564,12 +604,7 @@ if __name__ == "__main__":
   parser.add_argument("--popsize", type=float, default=40)
   parser.add_argument("--random_dynamic", type=int, default=0)
   parser.add_argument("--random_force", type=int, default=0)
-  parser.add_argument("--task_mode", type=str, default="stairstair")
   parser.add_argument("--step_y", type=float, default=0.05)
-  parser.add_argument("--load", type=str, default="", help="Directory to load agent from.")
-  parser.add_argument("--eval", type=int, default=0, help="Evaluate or not")
-  parser.add_argument("--render", type=int, default=0, help="render or not")
-  parser.add_argument("--suffix", type=str, default="exp0")
   parser.add_argument("--random", type=int, default=0)
   parser.add_argument("--normal", type=int, default=1)
   parser.add_argument("--vel_d", type=float, default=0.5)
@@ -577,10 +612,11 @@ if __name__ == "__main__":
   parser.add_argument("--reward_p", type=float, default=5)
   parser.add_argument("--footheight", type=float, default=0.1)
   parser.add_argument("--steplen", type=float, default=0.05)
-  parser.add_argument("--ETG", type=int, default=1)
-  parser.add_argument("--ETG_T2", type=float, default=0.5)
   parser.add_argument("--e_step", type=int, default=400)
   parser.add_argument("--act_mode", type=str, default="traj")
+  parser.add_argument("--act_bound", type=float, default=0.3)
+  parser.add_argument("--ETG", type=int, default=1)
+  parser.add_argument("--ETG_T2", type=float, default=0.5)
   parser.add_argument("--ETG_path", type=str, default="None")
   parser.add_argument("--ETG_H", type=int, default=20)
   parser.add_argument("--stand", type=float, default=0)
@@ -590,14 +626,13 @@ if __name__ == "__main__":
   parser.add_argument("--rew_feet_vel", type=float, default=0.3)
   parser.add_argument("--rew_badfoot", type=float, default=0.1)
   parser.add_argument("--rew_footcontact", type=float, default=0.1)
-  parser.add_argument("--act_bound", type=float, default=0.3)
   parser.add_argument("--sensor_dis", type=int, default=1)
   parser.add_argument("--sensor_motor", type=int, default=1)
   parser.add_argument("--sensor_imu", type=int, default=1)
   parser.add_argument("--sensor_contact", type=int, default=1)
   parser.add_argument("--sensor_ETG", type=int, default=1)
   parser.add_argument("--sensor_ETG_obs", type=int, default=0)
-  parser.add_argument("--sensor_footpose", type=int, default=0)
+  parser.add_argument("--sensor_footpose", type=int, default=1)
   parser.add_argument("--sensor_dynamic", type=int, default=0)
   parser.add_argument("--sensor_exforce", type=int, default=0)
   parser.add_argument("--sensor_noise", type=int, default=0)
@@ -610,4 +645,21 @@ if __name__ == "__main__":
   parser.add_argument("--x_noise", type=int, default=0)
   parser.add_argument("--action_repeat_num", type=int, default=5)
   args = parser.parse_args()
+
+  if args.resume != "":
+    load_path = os.path.split(args.resume)[0]
+    args_file = os.path.join(load_path, 'parse_args')
+    with open(args_file, 'r') as f:
+      args.__dict__ = json.load(f)
+    args.eval = False
+  elif args.eval != 0:
+    load_args = args.load
+    load_path = os.path.split(args.load)[0]
+    args_file = os.path.join(load_path, 'parse_args')
+    with open(args_file, 'r') as f:
+      args.__dict__ = json.load(f)
+    args.load = load_args
+    args.eval = True
+    args.render = True
+
   main()
