@@ -10,89 +10,64 @@ STEP_HEIGHT = np.arange(0.08, 0.101, STEP_HEIGHT_INTERVAL)
 SLOPE = np.arange(0.3, 0.501, SLOPE_INTERVAL)
 STEP_WIDTH = np.arange(0.26, 0.401, STEP_WIDTH_INTERVAL)
 STEP_PER_NUM = 5
-DELTA_X = 1
+SLOPE_WIDTH = 1
 FRICTION = 5.0
 
 
-def upstair_terrain(stepwidth=0.33, stepheight=0.05, slope=0.05, stepnum=40, mode="terrain-fix", env_vecs=[]):
+def generate_terrain(stepwidth=0.33, stepheight=0.05, slope=0.05, stepnum=40, mode="upstair-fix", env_vecs=[]):
   add_height = 0
   # print("mode:",mode)
   env_info = []
-  if mode == "stair-fix":
-    boxHalfLength = stepwidth
-    boxHalfWidth = 2.5
-    boxHalfHeight = stepheight
-    sh_colBox = p.createCollisionShape(p.GEOM_BOX, halfExtents=[boxHalfLength, boxHalfWidth, boxHalfHeight])
-    sth = stepheight
-    steplen = stepwidth
-    basez = - stepheight
-    for i in range(stepnum):
-      id = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=sh_colBox,
-                             basePosition=[0.66 + i * steplen, 0, basez + (i + 1) * sth],
-                             baseOrientation=[0.0, 0.0, 0.0, 1])
-      p.changeDynamics(id, -1, lateralFriction=FRICTION)
+  # default long stair or slope terrain
+  if mode == "upstair-fix":
+    upstair_fix_terrain(stepwidth, stepheight)
     env_info.append([-10, 100, np.array([0, 0, 1, 0, 0, stepheight, stepwidth])])
-  elif mode == "stair-var":
-    basez = 0
-    for i in range(5):
-      boxHalfLength = stepwidth
-      boxHalfWidth = 2.5
-      boxHalfHeight = stepheight + i * 0.01
-      sh_colBox = p.createCollisionShape(p.GEOM_BOX, halfExtents=[boxHalfLength, boxHalfWidth, boxHalfHeight])
-      sth = boxHalfHeight
-      steplen = stepwidth
-      stepnums = 8
-      for j in range(stepnums):
-        id = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=sh_colBox,
-                               basePosition=[0.66 + (i * stepnums + j) * steplen, 0, basez + j * sth],
-                               baseOrientation=[0.0, 0.0, 0.0, 1])
-        p.changeDynamics(id, -1, lateralFriction=1.0)
-      basez = basez + stepnums * sth
+  elif mode == "upstair-var":
+    upstair_var_terrain(stepwidth, stepheight)
+    env_info.append([-10, 100, np.array([0, 0, 1, 0, 0, stepheight, stepwidth])])
   elif mode == "downstair":
     downstair_terrain(stepwidth, stepheight)
     add_height = stepheight * stepnum
     env_info.append([-10, 100, np.array([0, 0, 0, 1, 0, stepheight, stepwidth])])
   elif mode == "slope":
     upslope_terrain(slope)
-    if slope < 0:
+    if slope < 0:  # long downslope
       add_height = 100 * np.sin(abs(slope)) - np.tan(abs(slope)) + abs(slope) * 0.15
       env_info.append([-10, 100, np.array([0, 1, 0, 0, slope, 0, 0])])
-    else:
+    else:  # long upslope
       env_info.append([-10, 100, np.array([1, 0, 0, 0, slope, 0, 0])])
+  # specical stair and slope terrain
   elif mode.endswith("random") or mode == "special":
     if mode == "special":
       env_vectors = env_vecs
     else:
       env_vectors = generate_env_vec(mode, 10)
     # env_vectors = [np.array([0.  , 0.  , 0.  , 1.  , 0.08, 0.07, 0.3 ]), np.array([0.  , 0.  , 1.  , 0.  , 0.12, 0.05, 0.28])]
-    deltaz = cal_basez(env_vectors, STEP_PER_NUM, DELTA_X)
+    deltaz = cal_basez(env_vectors, STEP_PER_NUM, SLOPE_WIDTH)
     basex = -1
     basez = 0
-    # print(env_vectors)
-    # print("deltaz:",deltaz)
     if deltaz < 0:
       add_height = abs(deltaz)
       basez = abs(deltaz)
-    # print("init:",basex,basez)
     last_x = basex
     basex, basez = subplane(basex, basez, 0.5)
-    env_info.append([last_x, basex, np.array([0, 0, 0, 0, 0, 0, 0])])
+    env_info.append([last_x, basex, np.array([0, 0, 0, 0, 0, 0, 0])])  # -1, 0.5
     for i in range(len(env_vectors)):
       env_vec = env_vectors[i]
       last_x = basex
-      if env_vec[0]:
+      if env_vec[0]:  # sub terrain: upslope
         env_vec[5] = 0
         env_vec[6] = 0
-        basex, basez = subslope(basex=basex, basez=basez, slope=env_vec[4], endx=basex + DELTA_X)
-      elif env_vec[1]:
+        basex, basez = subslope(basex=basex, basez=basez, slope=env_vec[4], endx=basex+SLOPE_WIDTH)
+      elif env_vec[1]:  # downslope
         env_vec[5] = 0
         env_vec[6] = 0
-        basex, basez = subslope(basex=basex, basez=basez, slope=-env_vec[4], endx=basex + DELTA_X)
-      elif env_vec[2]:
+        basex, basez = subslope(basex=basex, basez=basez, slope=-env_vec[4], endx=basex+SLOPE_WIDTH)
+      elif env_vec[2]:  # upstair
         env_vec[4] = 0
         basex, basez = substair(basex=basex, basez=basez, stepwidth=env_vec[6], stepheight=env_vec[5],
                                 stepnum=STEP_PER_NUM, sign="up")
-      elif env_vec[3]:
+      elif env_vec[3]:  # downstair
         env_vec[4] = 0
         basex, basez = substair(basex=basex, basez=basez, stepwidth=env_vec[6], stepheight=env_vec[5],
                                 stepnum=STEP_PER_NUM, sign="down")
@@ -118,22 +93,22 @@ def upstair_terrain(stepwidth=0.33, stepheight=0.05, slope=0.05, stepnum=40, mod
       # print("{}: basex{} basez{}".format(i,basex,basez))
     if basez > 0:
       deltax = basez / np.tan(0.4)
-      basex, basez = subslope(basex=basex, basez=basez, slope=-0.4, endx=basex + deltax)
+      basex, basez = subslope(basex=basex, basez=basez, slope=-0.4, endx=basex+deltax)
       env_info.append([last_x, basex, np.array([0, 1, 0, 0, -0.4, 0, 0])])
     # print(env_info)
   elif mode == "balance_beam":
     add_height = 5
-    balance_beam(stepwidth, stepheight)
+    balance_beam_terrain(stepwidth, stepheight)
     env_info.append([-10, 100, np.zeros(7)])
   elif mode == "gallop":
     add_height = 5
-    gallop(stepwidth)
+    gallop_terrain(stepwidth)
     env_info.append([-10, 100, np.zeros(7)])
   elif mode == "hurdle":
-    hurdle(stepwidth, stepheight)
+    hurdle_terrain(stepwidth, stepheight)
     env_info.append([-10, 100, np.zeros(7)])
   elif mode == "cave":
-    cave(stepwidth, stepheight)
+    cave_terrain(stepwidth, stepheight)
     env_info.append([-10, 100, np.zeros(7)])
   return add_height, env_info
   # elif mode == "random":
@@ -231,6 +206,36 @@ def subslope(basex=0, basez=0, slope=0.1, endx=0):
   p.changeDynamics(id, -1, lateralFriction=FRICTION)
   return (endx, basez + np.sin(slope) * boxHalfLength * 2)
 
+def upstair_fix_terrain(stepwidth, stepheight, stepnum=40):
+  boxHalfLength = stepwidth
+  boxHalfWidth = 2.5
+  boxHalfHeight = stepheight
+  sh_colBox = p.createCollisionShape(p.GEOM_BOX, halfExtents=[boxHalfLength, boxHalfWidth, boxHalfHeight])
+  sth = stepheight
+  steplen = stepwidth
+  basez = - stepheight
+  for i in range(stepnum):
+    id = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=sh_colBox,
+                           basePosition=[0.66 + i * steplen, 0, basez + (i + 1) * sth],
+                           baseOrientation=[0.0, 0.0, 0.0, 1])
+    p.changeDynamics(id, -1, lateralFriction=FRICTION)
+
+def upstair_var_terrain(stepwidth, stepheight):
+  basez = 0
+  for i in range(5):
+    boxHalfLength = stepwidth
+    boxHalfWidth = 2.5
+    boxHalfHeight = stepheight + i * 0.01
+    sh_colBox = p.createCollisionShape(p.GEOM_BOX, halfExtents=[boxHalfLength, boxHalfWidth, boxHalfHeight])
+    sth = boxHalfHeight
+    steplen = stepwidth
+    stepnums = 8
+    for j in range(stepnums):
+      id = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=sh_colBox,
+                             basePosition=[0.66 + (i * stepnums + j) * steplen, 0, basez + j * sth],
+                             baseOrientation=[0.0, 0.0, 0.0, 1])
+      p.changeDynamics(id, -1, lateralFriction=FRICTION)
+    basez = basez + stepnums * sth
 
 def downstair_terrain(stepwidth, stepheight, stepnum=40):
   boxHalfLength = 2.5
@@ -268,7 +273,7 @@ def upslope_terrain(slope=0.05):
   p.changeDynamics(id, -1, lateralFriction=FRICTION)
 
 
-def balance_beam(stepwidth=0.1, stepheight=1):
+def balance_beam_terrain(stepwidth=0.1, stepheight=1):
   boxHalfLength = 2.5
   boxHalfWidth = 2.5
   boxHalfHeight = 0.01
@@ -285,7 +290,7 @@ def balance_beam(stepwidth=0.1, stepheight=1):
   p.changeDynamics(id_balance, -1, lateralFriction=FRICTION)
 
 
-def gallop(stepwidth=0.3, stepnum=30):
+def gallop_terrain(stepwidth=0.3, stepnum=30):
   boxHalfLength = 2.5
   boxHalfWidth = 2.5
   boxHalfHeight = 0.01
@@ -307,7 +312,7 @@ def gallop(stepwidth=0.3, stepnum=30):
   p.changeDynamics(id_back, -1, lateralFriction=FRICTION)
 
 
-def hurdle(stepwidth=0.3, stepheight=0.2, stepnum=30):
+def hurdle_terrain(stepwidth=0.3, stepheight=0.2, stepnum=30):
   boxHalfLength = 0.01
   boxHalfWidth = 4
   boxHalfHeight = stepheight / 2.0
@@ -320,7 +325,7 @@ def hurdle(stepwidth=0.3, stepheight=0.2, stepnum=30):
     current_x += stepwidth
 
 
-def cave(stepwidth=0.25, stepheight=0.4):
+def cave_terrain(stepwidth=0.25, stepheight=0.4):
   upbox = p.createCollisionShape(p.GEOM_BOX, halfExtents=[10, stepwidth, 0.01])
   id_up = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=upbox,
                             basePosition=[10 + 0.3, 0, stepheight], baseOrientation=[0.0, 0.0, 0.0, 1])
