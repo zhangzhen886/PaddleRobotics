@@ -20,7 +20,7 @@ Param_Dict = {
   'rew_badfoot'     : 0.1,
   'rew_footcontact' : 0.1,
   'rew_feet_airtime': 0.0,
-  'rew_feet_pos'    : 1.0
+  'rew_feet_pos'    : 0.5
 }
 Random_Param_Dict = {
   'random_dynamics': 0,
@@ -349,7 +349,8 @@ class RewardShaping(gym.Wrapper):
       info["d_yaw"] = 0
     if self.render:
       self.line_id = self.draw_direction(info)
-    return obs, info
+    # return obs, info
+    return obs
 
   def step(self, action, **kwargs):
     self.steps += 1
@@ -373,10 +374,12 @@ class RewardShaping(gym.Wrapper):
     info["vel"] = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     info["d_yaw"] = kwargs["d_yaw"] if "d_yaw" in kwargs.keys() else 0
     donef = kwargs["donef"] if "donef" in kwargs.keys() else False
-    info["foot_position_world"] = self.get_foot_world(info)
+    # info["foot_position_world"] = self.get_foot_world(info)
     # get reward terms, stored in the "info"
     info = self.reward_shaping(obs, rew, done, info, action, donef)
     rewards = 0
+    done = self.terminate(info)
+    info['rew_done'] = -1 * self.reward_param['rew_done'] if done else 0
     # sum the reward terms
     for key in Param_Dict.keys():
       if key in info.keys():
@@ -402,6 +405,7 @@ class RewardShaping(gym.Wrapper):
     info['rew_up'] = self.reward_param['rew_up'] * self.re_up(info) * k  # roll and pitch
     info['rew_feet_vel'] = self.reward_param['rew_feet_vel'] * self.re_feet_velocity(info, last_footposition=last_footposition)  # foot velocity
     info['rew_feet_airtime'] = self.reward_param['rew_feet_airtime'] * self.re_feet_air_time(info)
+    info['rew_feet_pos'] = self.reward_param['rew_feet_pos'] * self.re_feet_position(info)
     info['rew_velx'] = self.reward_param['rew_velx'] * rew  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
     info['rew_actionrate'] = self.reward_param['rew_actionrate'] * self.re_action_rate(action, info)
     # discouraged terms
@@ -409,9 +413,6 @@ class RewardShaping(gym.Wrapper):
     info['rew_badfoot'] = -self.reward_param['rew_badfoot'] * self.robot.GetBadFootContacts()
     lose_contact_num = np.sum(1.0 - np.array(info["real_contact"]))
     info['rew_footcontact'] = -self.reward_param['rew_footcontact'] * max(lose_contact_num - 2, 0)
-    done = self.terminate(info)
-    info['rew_done'] = -1 * self.reward_param['rew_done'] if done else 0
-    info['rew_feet_pos'] = -self.reward_param['rew_feet_pos'] * self.re_feet_position(info)
     return info
 
   def draw_direction(self, info):
@@ -428,8 +429,10 @@ class RewardShaping(gym.Wrapper):
     self.pybullet_client.removeAllUserDebugItems()
     for i in range(self.last_contact_position.shape[0]):
       contact_pos = self.last_contact_position[i] + [0.3, 0, 0]
-      self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, contact_pos[1], 0.0],
-                                            lineToXYZ=[contact_pos[0]+0.02, contact_pos[1], 0.0],
+      if i % 2 == 1: y_pos = 0.135
+      else: y_pos = -0.135
+      self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, y_pos, 0.0],
+                                            lineToXYZ=[contact_pos[0]+0.02, y_pos, 0.0],
                                             lineColorRGB=color_list[i], lineWidth=20)
 
   def terminate(self, info):
@@ -484,7 +487,8 @@ class RewardShaping(gym.Wrapper):
   def c_prec(self, v, t, m):
     if m < 1e-5:
       print(m)
-    w = np.arctanh(np.sqrt(0.95)) / m
+    w = np.arctanh(np.sqrt(0.95)) / m  # 2.89 / m
+    # w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m
     return np.tanh(np.power((v - t) * w, 2))
 
   def re_action_rate(self, action, info):
@@ -544,18 +548,23 @@ class RewardShaping(gym.Wrapper):
     # reward target foot position
     contact = np.array(info["real_contact"])
     contact_position = np.array(info["foot_position_world"])
+    lift_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), contact)
     first_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), self.last_contacts)
     first_contact = np.repeat(first_contact.reshape(-1,1), 3, axis=1)
     feet_fly_length = (contact_position - self.last_contact_position) * first_contact
     rew_feet_length = 0
     for i in range(first_contact.shape[0]):
       if first_contact[i][0] == True:
-        feet_length_err = np.sum(np.square(feet_fly_length[i] - np.array([0.3, 0.0, 0.0])))
+        # feet_length_err = np.sum(np.sqrt(np.square(feet_fly_length[i] - np.array([0.3, 0.0, 0.0]))))
+        feet_length_err = np.sqrt(np.sum(np.square([feet_fly_length[i][0]-0.3, abs(contact_position[i][1])-0.135])))
+        rew_feet_length += feet_length_err
         # if i == 0:
         #   print(feet_length_err)
-        rew_feet_length += feet_length_err
         self.last_contact_position[i] = contact_position[i]
-    rew_feet_length = self.c_prec(rew_feet_length, 0, 0.1)
+      # if lift_contact[i] == True:
+      #   self.last_contact_position[i] = contact_position[i]
+    # rew_feet_length = 1 - self.c_prec(rew_feet_length, 0, 0.1)
+    rew_feet_length = -self.c_prec(rew_feet_length, 0, 0.1)
     return rew_feet_length
 
   def get_foot_world(self, info={}):

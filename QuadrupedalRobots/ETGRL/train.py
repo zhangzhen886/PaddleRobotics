@@ -47,9 +47,9 @@ WARMUP_STEPS = 1e4
 EVAL_EVERY_STEPS = 1e4
 ES_EVERY_STEPS = 5e4
 ES_TRAIN_STEPS = 10
-PARTICLE_NUM = 100
-PER_EPISODE = 3
-EVAL_EPISODES = 1
+# PARTICLE_NUM = 100
+# PER_EPISODE = 3
+# EVAL_EPISODES = 1
 MEMORY_SIZE = int(1e6)
 BATCH_SIZE = 256
 GAMMA = 0.99
@@ -189,11 +189,11 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
   success_num = 0
   critic_loss_list = []
   actor_loss_list = []
-  while not terminal:
+  while True:
     episode_steps += 1
     # Select action randomly or according to policy, WARMUP_STEPS==1e4
     new_action = []
-    for i in range(ENV_NUMS):
+    for i in range(env.num_envs):
       if rpm.size() < WARMUP_STEPS:
         action = np.random.uniform(-1, 1, size=action_dim)
       else:
@@ -206,15 +206,13 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     # Perform action, action_bound: [0.3,0.3,0.3] * 4
     # next_obs, reward, done, info = env.step(new_action * action_bound, donef=(episode_steps > max_step))
     next_obs, reward, done, info = env.step(new_action)
-    # terminal = float(done) if episode_steps < 2000 else 0
-    # terminal = 1. - terminal
-    terminal = True if episode_steps > 2000 else False
-    # terminal = []
-    # for i in range(ENV_NUMS):
-    #   terminal[i] = float(done[0]) if episode_steps < 2000 else 0
-    #   terminal[i] = 1. - terminal[i]
+    for i in range(env.num_envs):
+      terminal = float(done[i]) if episode_steps < 2000 else 0
+      terminal = 1. - terminal
+      # Store data in replay memory
+      rpm.append(obs[i], new_action[i], reward[i], next_obs[i], terminal[i])
     for key in Param_Dict.keys():
-      for i in range(ENV_NUMS):
+      for i in range(env.num_envs):
         if key in info[i].keys():
           if key not in infos.keys():
             infos[key] = info[i][key]
@@ -222,16 +220,12 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
             infos[key] += info[i][key]
     # if info["rew_velx"] >= 0.3:
     #   success_num += 1
-    # Store data in replay memory
-    for i in range(ENV_NUMS):
-      rpm.append(obs[i], new_action[i], reward[i], next_obs[i], done[i])
-    # rpm.append(obs[0], action[0], reward[0], next_obs[0], terminal[0])
     obs = next_obs
-    episode_reward += np.sum(reward) / ENV_NUMS
+    episode_reward += np.sum(reward) / env.num_envs
     # Train agent after collecting sufficient data, off-policy actor-critic algorithm
     if rpm.size() >= WARMUP_STEPS:
       # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE)), BATCH_SIZE=256
-      for _ in range(8):
+      for _ in range(args.learn):
         batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
         critic_loss, actor_loss = agent.learn(
           batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
@@ -260,8 +254,8 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pu
   step_time_all = 0.0
   plt.ion()
   plt.figure(1)
-
-  while True:
+  # while True:
+  while not done:
     steps += 1
     t0 = time.time()
     action = agent.predict(obs)  # NN output: residual control signal
@@ -316,7 +310,7 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pu
     if steps > max_step:
       break
   steps_all += steps
-  print("[Evaluation] Average step time: {} step/second".format(steps_all/step_time_all))
+  print("\033[1;32m[Evaluation] Average step time: {} step/second.\033[0m".format(steps_all/step_time_all))
   return avg_reward, steps_all, infos
 
 
@@ -390,15 +384,15 @@ def main():
 
   dynamic_param = np.load("data/sigma0.5_exp0_dynamic_param9027.npy")
   dynamic_param = param2dynamic_dict(dynamic_param)
-  # render = True if (args.eval or args.render) else False
 
   ## create gym envs of the quadruped robot
+  render = True if (args.eval or args.render) else False
   if args.eval == 0:
     env = []
     if args.env_nums != 0:
       ENV_NUMS = args.env_nums
     for i in range(ENV_NUMS):
-      a1_env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=False,
+      a1_env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
                                     on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                                     reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                                     ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
@@ -410,7 +404,7 @@ def main():
     obs_dim = multi_env.observation_space.shape[0]
     action_dim = multi_env.action_space.shape[0]
   else:
-    env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=args.render,
+    env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
                                on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                                reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                                ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
@@ -482,6 +476,10 @@ def main():
       resume=args.resume,
       etg_path=ETG_path,
       load_path=args.load,
+      env_nums=ENV_NUMS,
+      batch_size=BATCH_SIZE,
+      actor_lr=ACTOR_LR,
+      critic_lr=CRITIC_LR,
     )
     log_mode = "online"
     if args.suffix == 'debug':
@@ -530,8 +528,8 @@ def main():
             total_steps, avg_reward, avg_step))
           print('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
             total_steps, avg_reward, avg_step))
-        if max_train_step < 600:
-          max_train_step += 50
+        if e_step < 600:
+          e_step += 50
         # save RL_agent(SAC) params and ETG(w,b) params
         path = os.path.join(outdir, 'itr_{:d}.pt'.format(int(total_steps)))
         RL_agent.save(path)
@@ -611,7 +609,7 @@ def main():
     # record a video for debuging
     os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     os.system("rm -rf img/*")
-    print('[Evaluation] Reward: {} Steps: {}'.format(avg_reward, avg_step))
+    print("\033[1;32m[Evaluation] Reward: {} Steps: {}\033[0m".format(avg_reward, avg_step))
 
 
 if __name__ == "__main__":
@@ -624,6 +622,8 @@ if __name__ == "__main__":
   parser.add_argument("--suffix", type=str, default="exp0")
   parser.add_argument("--task_mode", type=str, default="stairstair")
   parser.add_argument("--max_steps", type=int, default=1e7)
+  parser.add_argument("--env_nums", type=int, default=32)
+  parser.add_argument("--learn", type=int, default=8)
   parser.add_argument("--epsilon", type=float, default=0.4)
   parser.add_argument("--gamma", type=float, default=0.95)
   parser.add_argument("--sigma", type=float, default=0.02)
