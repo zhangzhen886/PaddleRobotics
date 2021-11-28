@@ -192,32 +192,34 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
   while True:
     episode_steps += 1
     # Select action randomly or according to policy, WARMUP_STEPS==1e4
-    new_action = []
+    actions = []
+    new_actions = []
     for i in range(env.num_envs):
       if rpm.size() < WARMUP_STEPS:
         action = np.random.uniform(-1, 1, size=action_dim)
       else:
         action = agent.sample(obs[i])
-      action = action * action_bound
-      if len(new_action) == 0:
-        new_action = copy(action)
-      else:
-        new_action = np.vstack((new_action, action))
+      actions.append(copy(action))
+      new_actions.append(copy(action * action_bound))
+      # if len(new_action) == 0:
+      #   new_action = copy(action * action_bound)
+      # else:
+      #   new_action = np.vstack((new_action, action * action_bound))
     # Perform action, action_bound: [0.3,0.3,0.3] * 4
     # next_obs, reward, done, info = env.step(new_action * action_bound, donef=(episode_steps > max_step))
-    next_obs, reward, done, info = env.step(new_action)
+    next_obs, reward, done, info = env.step(new_actions)
     for i in range(env.num_envs):
       terminal = float(done[i]) if episode_steps < 2000 else 0
       terminal = 1. - terminal
       # Store data in replay memory
-      rpm.append(obs[i], new_action[i], reward[i], next_obs[i], terminal[i])
+      rpm.append(obs[i], actions[i], reward[i], next_obs[i], terminal)
     for key in Param_Dict.keys():
       for i in range(env.num_envs):
         if key in info[i].keys():
           if key not in infos.keys():
-            infos[key] = info[i][key]
+            infos[key] = info[i][key] / env.num_envs
           else:
-            infos[key] += info[i][key]
+            infos[key] += info[i][key] / env.num_envs
     # if info["rew_velx"] >= 0.3:
     #   success_num += 1
     obs = next_obs
@@ -584,9 +586,9 @@ def main():
             wandb.log({'ES/episode_maxre': np.max(fitness_list)})
             wandb.log({'ES/episode_restd': np.std(fitness_list)})
             wandb.log({'ES/episode_length': np.mean(steps)})
-            # for key in Param_Dict.keys():
-            #   wandb.log({'ES/episode_{}'.format(key): info[key]})
-            #   wandb.log({'ES/mean_{}'.format(key): infos[key] / np.mean(steps)})
+            for key in Param_Dict.keys():
+              wandb.log({'ES/episode_{}'.format(key): info[key]})
+              wandb.log({'ES/mean_{}'.format(key): infos[key] / np.mean(steps)})
         ETG_best_param = best_param
         points_add = ETG_best_param.reshape(-1, 2)
         new_points = prior_points + points_add
