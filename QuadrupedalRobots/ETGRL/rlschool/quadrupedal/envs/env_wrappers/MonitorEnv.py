@@ -378,8 +378,6 @@ class RewardShaping(gym.Wrapper):
     # get reward terms, stored in the "info"
     info = self.reward_shaping(obs, rew, done, info, action, donef)
     rewards = 0
-    done = self.terminate(info)
-    info['rew_done'] = -1 * self.reward_param['rew_done'] if done else 0
     # sum the reward terms
     for key in Param_Dict.keys():
       if key in info.keys():
@@ -413,6 +411,8 @@ class RewardShaping(gym.Wrapper):
     info['rew_badfoot'] = -self.reward_param['rew_badfoot'] * self.robot.GetBadFootContacts()
     lose_contact_num = np.sum(1.0 - np.array(info["real_contact"]))
     info['rew_footcontact'] = -self.reward_param['rew_footcontact'] * max(lose_contact_num - 2, 0)
+    done = self.terminate(info)
+    info['rew_done'] = -self.reward_param['rew_done'] if done else 0
     return info
 
   def draw_direction(self, info):
@@ -487,8 +487,7 @@ class RewardShaping(gym.Wrapper):
   def c_prec(self, v, t, m):
     if m < 1e-5:
       print(m)
-    w = np.arctanh(np.sqrt(0.95)) / m  # 2.89 / m
-    # w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m
+    w = np.arctanh(np.sqrt(0.95)) / m
     return np.tanh(np.power((v - t) * w, 2))
 
   def re_action_rate(self, action, info):

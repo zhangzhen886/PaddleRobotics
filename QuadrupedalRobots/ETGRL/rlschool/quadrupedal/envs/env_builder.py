@@ -24,7 +24,7 @@ from rlschool.quadrupedal.envs.env_wrappers.gait_generator_env import GaitGenera
 SENSOR_MODE = {"dis":1,"motor":1,"imu":1,"contact":1,"footpose":0,"ETG":0}
 
 # call in A1GymEnv.init()
-def build_regular_env(robot_class,
+def build_regular_env(robot_class,  # a1.A1
                       motor_control_mode,
                       dynamic_param,
                       sensor_mode = {"dis":1,"imu":1,"motor":1,"contact":1},

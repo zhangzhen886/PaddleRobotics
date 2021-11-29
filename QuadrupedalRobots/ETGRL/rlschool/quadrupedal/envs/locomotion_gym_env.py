@@ -17,20 +17,22 @@ from rlschool.quadrupedal.envs.utilities.heightfield import HeightField
 from rlschool.quadrupedal.robots import robot_config
 from rlschool.quadrupedal.envs.sensors import sensor
 from rlschool.quadrupedal.envs.sensors import space_utils
-from rlschool.quadrupedal.envs.utilities.terrain import upstair_terrain, downstair_terrain,upslope_terrain
+from rlschool.quadrupedal.envs.utilities.terrain import generate_terrain, downstair_terrain,upslope_terrain
 from rlschool.quadrupedal.envs.utilities.env_utils import flatten_observations
 _ACTION_EPS = 0.01
 _NUM_SIMULATION_ITERATION_STEPS = 300
 _LOG_BUFFER_LENGTH = 5000
 import copy
-terrain_modes = ["stair-fix","stair-var","downstair","slope","random","special",
-                  "upstair-random","downstair-random","downslope-random","upslope-random",
-                  "balance_beam","cliff","hurdle","cave"]
 
+terrain_modes = ["upstair-fix", "upstair-var", "downstair", "slope", "random", "special",
+                 "upstair-random", "downstair-random", "downslope-random", "upslope-random",
+                 "balance_beam", "cliff", "hurdle", "cave"]
+
+# env vector(7):
 upstair = np.array([0,0,1,0,0,0.08,0.25])
+downstair = np.array([0,0,0,1,0,0.08,0.25])
 upslope = np.array([1,0,0,0,0.34,0,0])
 downslope = np.array([0,1,0,0,0.34,0,0])
-downstair = np.array([0,0,0,1,0,0.08,0.25])
 plane = np.zeros(7)
 upstair_downslope = [upstair,downslope,plane,upstair,downslope,plane,upstair,downslope,plane,upstair,downslope,plane,
                     upstair,downslope,plane,upstair,downslope,plane]
@@ -40,6 +42,8 @@ upstair_downstair = [upstair,downstair,plane,upstair,downstair,plane,upstair,dow
                     upstair,downstair,plane,upstair,downstair,plane,]
 upslope_downslope = [upslope,downslope,plane,upslope,downslope,plane,upslope,downslope,plane,upslope,downslope,plane,
                     upslope,downslope,plane,upslope,downslope,plane,]
+
+random_terrain_dict = {1:upstair_downslope, 2:upslope_downstair, 3:upstair_downstair, 4:upslope_downslope}
 
 class LocomotionGymEnv(gym.Env):
   """The gym environment for the locomotion tasks."""
@@ -93,8 +97,7 @@ class LocomotionGymEnv(gym.Env):
     self._world_dict = {}
     self._task = task  # task = simple_forward_task.SimpleForwardTask, in "build_regular_env()"
     self.height_field = 0
-    self.task_mode = task_mode 
-    self.terrain_dict = {1:upstair_downslope, 2:upslope_downstair, 3:upstair_downstair, 4:upslope_downslope}
+    self.task_mode = task_mode
 
     if task_mode == "heightfield":
       self.height_field = 1
@@ -125,7 +128,7 @@ class LocomotionGymEnv(gym.Env):
     if self._is_render:
       self._pybullet_client = bullet_client.BulletClient(
           connection_mode=pybullet.GUI)
-      pybullet.configureDebugVisualizer(
+      self._pybullet_client.configureDebugVisualizer(
           pybullet.COV_ENABLE_GUI,
           gym_config.simulation_parameters.enable_rendering_gui)
       if hasattr(self._task, '_draw_ref_model_alpha'):
@@ -309,8 +312,8 @@ class LocomotionGymEnv(gym.Env):
     if "hardset" in kwargs.keys():
       if kwargs["hardset"]:
         if "mode" in kwargs.keys() and kwargs["mode"] in terrain_modes:
-          self.add_height,self.env_info = upstair_terrain(stepwidth=kwargs["stepwidth"],slope=kwargs["slope"],
-                          stepheight=kwargs["stepheight"],mode=kwargs["mode"],env_vecs=kwargs["env_vec"])
+          self.add_height,self.env_info = generate_terrain(stepwidth=kwargs["stepwidth"], slope=kwargs["slope"],
+                                                           stepheight=kwargs["stepheight"], mode=kwargs["mode"], env_vecs=kwargs["env_vec"])
         # else:
         #   if self.task_mode == "stairslope":
         #     print("ok!")
@@ -320,24 +323,24 @@ class LocomotionGymEnv(gym.Env):
         #     print(self.task_mode)
     if self.first_reset:
       if self.task_mode == "stairslope":
-        self.add_height,self.env_info = upstair_terrain(mode="special",env_vecs=upstair_downslope)
+        self.add_height,self.env_info = generate_terrain(mode="special", env_vecs=upstair_downslope)
       elif self.task_mode == "stairstair":
-        self.add_height,self.env_info = upstair_terrain(mode="special",env_vecs=upstair_downstair)
+        self.add_height,self.env_info = generate_terrain(mode="special", env_vecs=upstair_downstair)
       elif self.task_mode == "slopestair":
-        self.add_height,self.env_info = upstair_terrain(mode="special",env_vecs=upslope_downstair)
+        self.add_height,self.env_info = generate_terrain(mode="special", env_vecs=upslope_downstair)
       elif self.task_mode == "slopeslope":
-        self.add_height,self.env_info = upstair_terrain(mode="special",env_vecs=upslope_downslope)
+        self.add_height,self.env_info = generate_terrain(mode="special", env_vecs=upslope_downslope)
       elif self.task_mode == "gallop":
-        self.add_height,self.env_info = upstair_terrain(stepwidth=0.5,mode="gallop")
+        self.add_height,self.env_info = generate_terrain(stepwidth=0.5, mode="gallop")
       elif self.task_mode == "cave":
-        self.add_height,self.env_info = upstair_terrain(stepheight=0.18,mode="cave")
+        self.add_height,self.env_info = generate_terrain(stepheight=0.18, mode="cave")
       elif self.task_mode == "balancebeam":
-        self.add_height,self.env_info = upstair_terrain(stepwidth=0.05,stepheight=6,mode="balance_beam")
+        self.add_height,self.env_info = generate_terrain(stepwidth=0.05, stepheight=6, mode="balance_beam")
       elif self.task_mode == "highstair":
-        self.add_height,self.env_info = upstair_terrain(stepwidth=0.4,stepheight=0.13,mode="stair-fix")
+        self.add_height,self.env_info = generate_terrain(stepwidth=0.4, stepheight=0.13, mode="upstair-var")
     if self.task_mode == "random":
-      random_env = self.terrain_dict[rd.randint(1,4)]
-      self.add_height, self.env_info = upstair_terrain(mode="special", env_vecs=random_env)
+      random_env = random_terrain_dict[rd.randint(1, 4)]
+      self.add_height, self.env_info = generate_terrain(mode="special", env_vecs=random_env)
 
     if "yaw" in kwargs.keys():
       yaw = kwargs["yaw"]
@@ -512,14 +515,13 @@ class LocomotionGymEnv(gym.Env):
 
       base_pos = self._robot.GetBasePosition()
       # Also keep the previous orientation of the camera set by the user.
-      [yaw, pitch,
-       dist] = self._pybullet_client.getDebugVisualizerCamera()[8:11]
-      self._pybullet_client.resetDebugVisualizerCamera(dist, yaw, pitch,
-                                                       base_pos)
+      [yaw, pitch, dist] = self._pybullet_client.getDebugVisualizerCamera()[8:11]
+      self._pybullet_client.resetDebugVisualizerCamera(
+        dist, yaw, pitch, base_pos)
       self._pybullet_client.configureDebugVisualizer(
-          self._pybullet_client.COV_ENABLE_SINGLE_STEP_RENDERING, 1)
+        pybullet.COV_ENABLE_SINGLE_STEP_RENDERING)
       alpha = 1.
-      if self._show_reference_id>0:
+      if self._show_reference_id > 0:
         alpha = self._pybullet_client.readUserDebugParameter(self._show_reference_id)
       
       ref_col = [1, 1, 1, alpha]
@@ -559,6 +561,7 @@ class LocomotionGymEnv(gym.Env):
     info["drpy"] = self._robot.GetBaseRollPitchYawRate()
     info["base_position"] = self._robot.GetBasePosition()
     info["foot_position"] = self._robot.GetFootPositionsInBaseFrame()
+    info["foot_position_world"] = self._robot.GetFootPositionsInWorldFrame()
     info["real_contact"] = self._robot.GetFootContacts()
     info["joint_angle"] = self._robot.GetMotorAngles()
     info["env_info"] = self.env_info  # [lastx, basex, env_vec] in "upstair_terrain"
