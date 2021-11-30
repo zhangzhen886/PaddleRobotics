@@ -1,0 +1,20 @@
+<launch>
+    <arg name="description_name"           default="robot_description"/>
+    <arg name="description_file"           default="/home/zhenz/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/a1_urdf/a1.urdf"/>
+
+    <param name="$(arg description_name)" textfile="$(arg description_file)"/>
+
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" respawn="false" output="screen">
+        <param name="use_tf_static"     value="true"/>
+        <param name="publish_frequency" value="200"/>
+        <param name="ignore_timestamp" value="true"/>
+        <remap from="robot_description" to="$(arg description_name)"/>
+    </node>
+
+    <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+        <param name="/use_gui" value="false"/>
+    </node>
+
+    <node type="rviz" name="rviz" pkg="rviz"
+          args="-d /home/zhenz/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/launch/urdf_viewer.rviz" />
+</launch>
