@@ -267,6 +267,10 @@ class SubprocVecEnv(ShareVecEnv):
     obs, rews, dones, infos = zip(*results)
     return np.stack(obs), np.stack(rews), np.stack(dones), infos
 
+  def step(self, actions):
+    self.step_async(actions)
+    return self.step_wait()
+
   def reset(self, **kwargs):
     for remote in self.remotes:
       remote.send(('reset', kwargs))

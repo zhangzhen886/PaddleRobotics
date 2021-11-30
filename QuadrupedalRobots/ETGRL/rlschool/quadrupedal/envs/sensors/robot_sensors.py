@@ -143,6 +143,7 @@ class MotorAngleAccSensor(sensor.BoxSpaceSensor):
       self.first_time = False
     else:
       motor_acc = (motor_angles - self.last_angle)/self.dt
+      motor_acc1 = np.asarray(self._robot.GetMotorVelocities())
     if self.noise:
       motor_angles += np.random.normal(0,1e-2,size=self._num_motors)
       motor_acc += np.random.normal(0,0.5,size=self._num_motors)
@@ -492,6 +493,7 @@ class PoseSensor(sensor.BoxSpaceSensor):
                            (self._robot.GetTrueBaseRollPitchYaw()[2],)))
   def reset(self):
     pass
+
 class FootForceSensor(sensor.BoxSpaceSensor):
   """A sensor that reads the contact force of a robot."""
 
@@ -520,6 +522,7 @@ class FootForceSensor(sensor.BoxSpaceSensor):
     return self._robot.GetFootContactsForce( mode='full')
   def reset(self):
     pass
+
 class SimpleFootForceSensor(sensor.BoxSpaceSensor):
   """A sensor that reads the contact force of a robot."""
 
@@ -577,6 +580,7 @@ class FootContactSensor(sensor.BoxSpaceSensor):
     return np.array(self._robot.GetFootContactsForce( mode='simple')[:4]).reshape(-1)
   def reset(self):
     pass
+
 class FootPoseSensor(sensor.BoxSpaceSensor):
   """A sensor that reads the contact force of a robot."""
 
@@ -607,6 +611,7 @@ class FootPoseSensor(sensor.BoxSpaceSensor):
     self._std = np.array([3.9058894e-02,2.4757426e-02,4.2747084e-02,
                   4.1128017e-02, 2.7591322e-02, 4.3003809e-02, 4.3018311e-02, 2.8423777e-02,
                   4.7990609e-02, 4.6113804e-02, 2.8037265e-02, 4.9409315e-02])
+
   def _get_observation(self) -> _ARRAY:
     if self.normal:
       return (np.array(self._robot.GetFootPositionsInBaseFrame()).reshape(-1)-self._mean)/self._std

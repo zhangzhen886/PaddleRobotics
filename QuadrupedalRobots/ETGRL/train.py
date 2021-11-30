@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import sys
 import time
+import datetime
 from copy import copy, deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
@@ -61,7 +63,7 @@ STEP_HEIGHT = np.arange(0.08, 0.101, 0.002)
 SLOPE = np.arange(0.2, 0.401, 0.02)
 STEP_WIDTH = np.arange(0.26, 0.401, 0.02)
 default_pose = np.array([0, 0.9, -1.8] * 4)
-ENV_NUMS = 32
+ENV_NUMS = 8
 
 random_param = copy(Random_Param_Dict)
 reward_param = copy(Param_Dict)
@@ -71,6 +73,7 @@ mode_map = {"pose"  : robot_config.MotorControlMode.POSITION,
             "traj"  : robot_config.MotorControlMode.POSITION, }
 
 plt.rcParams['figure.dpi'] = 300
+logger = logging.getLogger(__name__)
 
 def plot_gait(w, b, ETG, points, save_path=None):
   w = np.vstack((w[0,], w[-1,]))
@@ -242,6 +245,56 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
   # logger.info('Torso:{} Feet:{} Up:{} Tau:{}'.format(infos['torso'],infos['feet'],infos['up'],infos['tau']))
   return episode_reward, episode_steps, infos
 
+def run_train_episode1(agent, env, rpm, max_step, action_bound, w=None, b=None):
+  action_dim = env.action_space.shape[0]
+  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
+  done = False
+  episode_reward, episode_steps = 0, 0
+  infos = {}
+  success_num = 0
+  critic_loss_list = []
+  actor_loss_list = []
+  while not done:
+    episode_steps += 1
+    # Select action randomly or according to policy, WARMUP_STEPS==1e4
+    if rpm.size() < WARMUP_STEPS:
+      action = np.random.uniform(-1, 1, size=action_dim)
+    else:
+      action = agent.sample(obs)
+    # action = np.zeros(action_dim)
+    new_action = copy(action)  # initial residual control signal
+    # Perform action, action_bound: [0.3,0.3,0.3] * 4
+    next_obs, reward, done, info = env.step(new_action * action_bound)
+    terminal = float(done) if episode_steps < 2000 else 0
+    terminal = 1. - terminal
+    # Store data in replay memory
+    rpm.append(obs, action, reward, next_obs, terminal)
+    for key in Param_Dict.keys():
+      if key in info.keys():
+        if key not in infos.keys():
+          infos[key] = info[key]
+        else:
+          infos[key] += info[key]
+    # if info["rew_velx"] >= 0.3:
+    #   success_num += 1
+    obs = next_obs
+    episode_reward += reward
+    # Train agent after collecting sufficient data, off-policy actor-critic algorithm
+    if rpm.size() >= WARMUP_STEPS:
+      # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE)), BATCH_SIZE=256
+      batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
+      critic_loss, actor_loss = agent.learn(
+        batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
+      critic_loss_list.append(critic_loss)
+      actor_loss_list.append(actor_loss)
+    if episode_steps > max_step:
+      break
+  if len(critic_loss_list) > 0:
+    infos["critic_loss"] = np.mean(critic_loss_list)
+    infos["actor_loss"] = np.mean(actor_loss_list)
+  # infos["success_rate"] = success_num / episode_steps
+  # logger.info('Torso:{} Feet:{} Up:{} Tau:{}'.format(infos['torso'],infos['feet'],infos['up'],infos['tau']))
+  return episode_reward, episode_steps, infos
 
 # Runs policy for 5 episodes by default and returns average reward
 # A fixed seed is used for the eval environment
@@ -330,6 +383,8 @@ def run_EStrain_episode(agent, env, max_step, action_bound, w=None, b=None, rpm=
     new_action = copy(action)
     # Perform action
     next_obs, reward, done, info = env.step(new_action * action_bound)
+    terminal = float(done) if episode_steps < 2000 else 0
+    terminal = 1. - terminal
     for key in Param_Dict.keys():
       if key in info.keys():
         if key not in infos.keys():
@@ -405,15 +460,15 @@ def main():
     multi_env = ma_env_wrappers.SubprocVecEnv(env)
     obs_dim = multi_env.observation_space.shape[0]
     action_dim = multi_env.action_space.shape[0]
-  else:
-    env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
-                               on_rack=False, sensor_mode=sensor_param, normal=args.normal,
-                               reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
-                               ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
-                               vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
-                               enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
-    obs_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
+  # else:
+  env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
+                             on_rack=False, sensor_mode=sensor_param, normal=args.normal,
+                             reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
+                             ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
+                             vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
+                             enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
+  obs_dim = env.observation_space.shape[0]
+  action_dim = env.action_space.shape[0]
 
   if args.act_mode == "pose":
     act_bound = np.array([0.1, 0.7, 0.7] * 4)
@@ -443,7 +498,9 @@ def main():
   if not args.eval:
     if not os.path.exists(args.outdir):
       os.makedirs(args.outdir)
-    suffix = args.suffix + '_' + args.task_mode
+    today = datetime.date.today()
+    formatted_today = today.strftime('%m%d')
+    suffix = formatted_today + args.suffix + '_' + args.task_mode
     outdir = os.path.join(args.outdir, suffix)
     if not os.path.exists(outdir) and args.resume == "":
       os.makedirs(outdir)
@@ -462,9 +519,10 @@ def main():
     # logger.set_dir(outdir)
     logging.basicConfig(filename=os.path.join(outdir, 'log.log'), level=logging.INFO, filemode=log_openmode,
                         format='[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s')
-    logger = logging.getLogger(__name__)
+
     logger.info("---------------------------------------------------------------------------------")
     logger.info("*********************************************************************************")
+    logger.info("argv:{}".format(sys.argv))
     logger.info("args:{}".format(args))
     logger.info("obs_dim: {}, act_dim: {}".format(obs_dim, action_dim))
     logger.info("reward param: {}".format(reward_param))
@@ -513,14 +571,14 @@ def main():
       for key in info.keys():
         wandb.log({'train/episode_{}'.format(key): info[key]}, step=total_steps)
         wandb.log({'train/mean_{}'.format(key): info[key] / episode_step}, step=total_steps)
-      logger.info('[Training] Total Steps: {} Reward: {}'.format(
-        total_steps, episode_reward))
+      logger.info('[Training] Total Steps: {} Reward: {} Steps: {} '.format(
+        total_steps, episode_reward, episode_step))
 
       # Evaluate episode, EVAL_EVERY_STEPS=10000
       if (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
         while (total_steps + 1) // EVAL_EVERY_STEPS >= test_flag:
           test_flag += 1
-          avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env[0], 600, act_bound, w, b)
+          avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b)
           wandb.log({'eval/episode_reward': avg_reward}, step=total_steps)
           wandb.log({'eval/episode_step': avg_step}, step=total_steps)
           for key in info.keys():
@@ -541,7 +599,7 @@ def main():
       if args.ES and args.ETG and (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag and total_steps >= WARMUP_STEPS:
         while (total_steps + 1) // ES_EVERY_STEPS >= ES_test_flag:
           ES_test_flag += 1
-          best_reward, avg_step, info = run_EStrain_episode(RL_agent, env[0], 400, act_bound, w, b, rpm)
+          best_reward, avg_step, info = run_EStrain_episode(RL_agent, env, 400, act_bound, w, b, rpm)
           best_param = ETG_best_param.copy().reshape(-1)
           for ei in range(ES_TRAIN_STEPS):  # ES_TRAIN_STEPS=10
             solutions = ES_solver.ask()  # size: args.popsize(default 40)
@@ -557,7 +615,7 @@ def main():
               w, b, _ = Opt_with_points(ETG=ETG_agent, ETG_T=args.ETG_T, w0=w0, b0=b0, points=new_points)
               if args.suffix is 'debug':
                 plot_gait(w, b, ETG_agent, new_points)
-              episode_reward, episode_step, info = run_EStrain_episode(RL_agent, env[0], 400, act_bound, w, b, rpm)
+              episode_reward, episode_step, info = run_EStrain_episode(RL_agent, env, 400, act_bound, w, b, rpm)
               fitness_list.append(episode_reward)
               steps.append(episode_step)
               for key in infos.keys():
@@ -649,7 +707,7 @@ if __name__ == "__main__":
   parser.add_argument("--enable_action_filter", type=int, default=0)
   parser.add_argument("--action_repeat_num", type=int, default=5)
   parser.add_argument("--ES", type=int, default=1)
-  parser.add_argument("--es_rpm", type=int, default=0, help='ES training store into RPM for SAC')
+  parser.add_argument("--es_rpm", type=int, default=1, help='ES training store into RPM for SAC')
   parser.add_argument("--e_step", type=int, default=400)
   parser.add_argument("--stand", type=float, default=0)
   parser.add_argument("--random_dynamic", type=int, default=0)

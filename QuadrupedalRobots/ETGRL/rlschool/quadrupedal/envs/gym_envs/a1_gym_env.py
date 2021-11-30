@@ -73,8 +73,12 @@ class A1GymEnv(gym.Env):
       reward_p=reward_p,
     )
     self.observation_space = self._env.observation_space
+    self.share_observation_space = copy(self.observation_space)
     self.action_space = self._env.action_space
     self.sensor_mode = sensor_mode
+
+  def step(self, action):
+    return self._env.step(action)
 
   def step(self, action, **kwargs):
     return self._env.step(action, **kwargs)
