@@ -185,15 +185,20 @@ def param2dynamic_dict(params):
 # Run episode for training
 def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
   action_dim = env.action_space.shape[0]
-  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
+  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise, heightfield_terrain=args.hft)
   terminal = False
   episode_reward, episode_steps = 0, 0
   infos = {}
   success_num = 0
   critic_loss_list = []
   actor_loss_list = []
+  sample_time = 0.0
+  step_time = 0.0
+  rpm_time = 0.0
+  learn_time = 0.0
   while True:
     episode_steps += 1
+    t0 = time.time()
     # Select action randomly or according to policy, WARMUP_STEPS==1e4
     actions = []
     new_actions = []
@@ -208,9 +213,13 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
       #   new_action = copy(action * action_bound)
       # else:
       #   new_action = np.vstack((new_action, action * action_bound))
+    t1 = time.time()
+    sample_time += t1 - t0
     # Perform action, action_bound: [0.3,0.3,0.3] * 4
     # next_obs, reward, done, info = env.step(new_action * action_bound, donef=(episode_steps > max_step))
     next_obs, reward, done, info = env.step(new_actions)
+    t2 = time.time()
+    step_time += t2 - t1
     for i in range(env.num_envs):
       terminal = float(done[i]) if episode_steps < 2000 else 0
       terminal = 1. - terminal
@@ -231,9 +240,13 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     if rpm.size() >= WARMUP_STEPS:
       # critic_loss, actor_loss = agent.learn(rpm.sample_batch(BATCH_SIZE)), BATCH_SIZE=256
       for _ in range(args.learn):
+        t2 = time.time()
         batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
+        t3 = time.time()
+        rpm_time += t3 - t2
         critic_loss, actor_loss = agent.learn(
           batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
+        learn_time += time.time() - t3
         critic_loss_list.append(critic_loss)
         actor_loss_list.append(actor_loss)
     if episode_steps > max_step:
@@ -243,6 +256,8 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     infos["actor_loss"] = np.mean(actor_loss_list)
   # infos["success_rate"] = success_num / episode_steps
   # logger.info('Torso:{} Feet:{} Up:{} Tau:{}'.format(infos['torso'],infos['feet'],infos['up'],infos['tau']))
+  # print("[TrainTime] sample: {:.4f}, step: {:.4f}, rpm: {:.4f}, learn: {:.4f}".format(
+  #   sample_time, step_time, rpm_time, learn_time))
   return episode_reward, episode_steps, infos
 
 def run_train_episode1(agent, env, rpm, max_step, action_bound, w=None, b=None):
@@ -303,7 +318,7 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pu
   infos = {}
   steps_all = 0
   # obs, info = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
-  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
+  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise, heightfield_terrain=args.hft)
   done = False
   steps = 0
   step_time_all = 0.0
@@ -370,7 +385,7 @@ def run_evaluate_episodes(agent, env, max_step, action_bound, w=None, b=None, pu
 
 
 def run_EStrain_episode(agent, env, max_step, action_bound, w=None, b=None, rpm=None):
-  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise)
+  obs = env.reset(ETG_w=w, ETG_b=b, x_noise=args.x_noise, heightfield_terrain=args.hft)
   done = False
   episode_reward, episode_steps = 0, 0
   infos = {}
@@ -449,8 +464,8 @@ def main():
     if args.env_nums != 0:
       ENV_NUMS = args.env_nums
     for _ in range(ENV_NUMS):
-      a1_env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
-                                    on_rack=False, sensor_mode=sensor_param, normal=args.normal,
+      a1_env = quadrupedal.A1GymEnv(task=args.task_mode, hf_terrain_mode=args.hft, motor_control_mode=mode_map[args.act_mode],
+                                    render=render, on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                                     reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                                     ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
                                     vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
@@ -461,8 +476,8 @@ def main():
     obs_dim = multi_env.observation_space.shape[0]
     action_dim = multi_env.action_space.shape[0]
   # else:
-  env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
-                             on_rack=False, sensor_mode=sensor_param, normal=args.normal,
+  env = quadrupedal.A1GymEnv(task=args.task_mode, hf_terrain_mode=args.hft, motor_control_mode=mode_map[args.act_mode],
+                             render=render, on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                              reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                              ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
                              vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
@@ -695,6 +710,7 @@ if __name__ == "__main__":
   parser.add_argument("--act_mode", type=str, default="traj")
   parser.add_argument("--act_bound", type=float, default=0.3)
   parser.add_argument("--x_noise", type=int, default=0)
+  parser.add_argument("--hft", type=str, default="slope")
   parser.add_argument("--ETG", type=int, default=1)
   parser.add_argument("--ETG_T", type=float, default=0.5)
   parser.add_argument("--ETG_H", type=int, default=20)
@@ -745,12 +761,14 @@ if __name__ == "__main__":
   elif args.eval != 0:
     load_args = args.load
     task_mode = args.task_mode
+    hft = args.hft
     load_path = os.path.split(args.load)[0]
     args_file = os.path.join(load_path, 'parse_args')
     with open(args_file, 'r') as f:
       args.__dict__ = json.load(f)
     args.load = load_args
     args.task_mode = task_mode
+    args.hft = hft
     args.eval = True
     args.render = True
     param_file = os.path.join(load_path, 'reward_param')

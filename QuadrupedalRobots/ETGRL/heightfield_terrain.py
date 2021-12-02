@@ -2,7 +2,7 @@ import time
 
 import pybullet
 import numpy as np
-from scipy.interpolate import interp2d, interp1d
+from scipy.interpolate import interp2d
 
 
 def unit(x) -> np.ndarray:
@@ -69,8 +69,9 @@ class RandomUniformTerrain(Terrain):
             heightfieldTextureScaling=size,
             heightfieldData=self.height_field.reshape(-1),
             numHeightfieldColumns=data_size, numHeightfieldRows=data_size)
+        z_offset = (np.amax(self.height_field) + np.amin(self.height_field)) / 2
         self.terrain_id = bullet_client.createMultiBody(0, terrain_shape, -1,
-                                                        self.offset + (0, 0, np.mean(self.height_field).item()),
+                                                        self.offset + (0, 0, z_offset),
                                                         (0, 0, 0, 1))
         bullet_client.changeVisualShape(self.terrain_id, -1, rgbaColor=(1, 1, 1, 1))
         bullet_client.changeDynamics(self.terrain_id, -1, lateralFriction=5.0)
@@ -129,8 +130,9 @@ class SlopeTerrain(Terrain):
             heightfieldTextureScaling=size,
             heightfieldData=self.height_field.reshape(-1),
             numHeightfieldColumns=data_size, numHeightfieldRows=data_size)
+        z_offset = (np.amax(self.height_field) + np.amin(self.height_field)) / 2
         self.terrain_id = bullet_client.createMultiBody(0, terrain_shape, -1,
-                                                        self.offset + (0, 0, np.mean(self.height_field).item()),
+                                                        self.offset + (0, 0, z_offset),
                                                         (0, 0, 0, 1))
         bullet_client.changeVisualShape(self.terrain_id, -1, rgbaColor=(1, 1, 1, 1))
         bullet_client.changeDynamics(self.terrain_id, -1, lateralFriction=5.0)

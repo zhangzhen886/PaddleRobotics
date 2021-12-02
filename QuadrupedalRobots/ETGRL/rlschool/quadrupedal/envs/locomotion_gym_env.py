@@ -23,6 +23,7 @@ _ACTION_EPS = 0.01
 _NUM_SIMULATION_ITERATION_STEPS = 300
 _LOG_BUFFER_LENGTH = 5000
 import copy
+import heightfield_terrain as ht
 
 terrain_modes = ["upstair-fix", "upstair-var", "downstair", "slope", "random", "special",
                  "upstair-random", "downstair-random", "downslope-random", "upslope-random",
@@ -59,8 +60,9 @@ class LocomotionGymEnv(gym.Env):
                env_sensors=None,
                robot_sensors=None,
                task=None,
-               random = False,
-               task_mode = "plane",
+               random=False,
+               task_mode="plane",
+               hf_terrain_mode="slope",
                height_field_iters=2,
                env_randomizers=None):
     """Initializes the locomotion gym environment.
@@ -96,11 +98,9 @@ class LocomotionGymEnv(gym.Env):
     # A dictionary containing the objects in the world other than the robot.
     self._world_dict = {}
     self._task = task  # task = simple_forward_task.SimpleForwardTask, in "build_regular_env()"
-    self.height_field = 0
     self.task_mode = task_mode
-
-    if task_mode == "heightfield":
-      self.height_field = 1
+    self.hf_terrain_mode = hf_terrain_mode
+    self.parametric_heightfield = None
 
     self._env_randomizers = env_randomizers if env_randomizers else []
 
@@ -164,11 +164,11 @@ class LocomotionGymEnv(gym.Env):
     self.observation_space = (
         space_utils.convert_sensors_to_gym_space_dictionary(
             self.all_sensors()))
-    self.hf = HeightField(2)
-    if self.height_field:
-        # Do 3x for extra roughness
-        for i in range(height_field_iters):
-            self.hf._generate_field(self)
+    # self.hf = HeightField(2)
+    # if self.height_field:
+    #     # Do 3x for extra roughness
+    #     for i in range(height_field_iters):
+    #         self.hf._generate_field(self)
     # print("height_field:",self.height_field)
 
   def _build_action_space(self):
@@ -258,11 +258,28 @@ class LocomotionGymEnv(gym.Env):
       self._pybullet_client.setGravity(0, 0, -10)
 
       # Rebuild the world.
-      self._world_dict = {
-          "ground": self._pybullet_client.loadURDF("plane_implicit.urdf")
-      }
+      # self._world_dict = {
+      #     "ground": self._pybullet_client.loadURDF("plane_implicit.urdf")
+      # }
+      # self._pybullet_client.changeDynamics(self._world_dict['ground'],-1,lateralFriction=5)
 
-      self._pybullet_client.changeDynamics(self._world_dict['ground'],-1,lateralFriction=5)
+      if self.task_mode == "heightfield":
+        if "heightfield_terrain" in kwargs.keys():
+          hf_terrain = kwargs["heightfield_terrain"]
+        else:
+          hf_terrain = self.hf_terrain_mode
+        if hf_terrain == "rough":
+          self.parametric_heightfield = ht.RandomUniformTerrain(self._pybullet_client, size=10)
+          self.add_height = 0.05
+        elif hf_terrain == "slope":
+          self.parametric_heightfield = ht.SlopeTerrain(self._pybullet_client, size=10)
+          self.add_height = 0.0
+        else:
+          self.parametric_heightfield = ht.PlainTerrain(self._pybullet_client)
+          self.add_height = 0.0
+      else:
+        ground = self._pybullet_client.loadURDF("plane_implicit.urdf")
+        self._pybullet_client.changeDynamics(ground, -1, lateralFriction=5)
 
       # cs = pybullet.createCollisionShape(pybullet.GEOM_BOX,halfExtents=[0.1,0.06,0.4])
       # id = pybullet.createMultiBody(baseMass=0, baseCollisionShapeIndex=cs,
@@ -292,9 +309,7 @@ class LocomotionGymEnv(gym.Env):
           allow_knee_contact)
       # if "stepheight" in kwargs.keys():
       # upstair_terrain(stepwidth=0.33,stepheight=0.05,mode="var")
-    initial_motor_angles = None
-    reset_duration = 0.0
-    reset_visualization_camera = True
+
     # if self.height_field:
     #   self.hf = HeightField(1)
     #   self.hf.UpdateHeightField()
@@ -312,8 +327,9 @@ class LocomotionGymEnv(gym.Env):
     if "hardset" in kwargs.keys():
       if kwargs["hardset"]:
         if "mode" in kwargs.keys() and kwargs["mode"] in terrain_modes:
-          self.add_height,self.env_info = generate_terrain(stepwidth=kwargs["stepwidth"], slope=kwargs["slope"],
-                                                           stepheight=kwargs["stepheight"], mode=kwargs["mode"], env_vecs=kwargs["env_vec"])
+          self.add_height,self.env_info = generate_terrain(stepwidth=kwargs["stepwidth"], stepheight=kwargs["stepheight"],
+                                                           slope=kwargs["slope"],
+                                                           mode=kwargs["mode"], env_vecs=kwargs["env_vec"])
         # else:
         #   if self.task_mode == "stairslope":
         #     print("ok!")
@@ -342,18 +358,20 @@ class LocomotionGymEnv(gym.Env):
       random_env = random_terrain_dict[rd.randint(1, 4)]
       self.add_height, self.env_info = generate_terrain(mode="special", env_vecs=random_env)
 
+    initial_motor_angles = None
+    reset_duration = 0.0
+    reset_visualization_camera = True
+    yaw = 0.0
+    add_x = 0.0
     if "yaw" in kwargs.keys():
       yaw = kwargs["yaw"]
-    else:
-      yaw = 0.0
-    add_x = 0
     if "x_noise" in kwargs.keys() and kwargs["x_noise"]:
       add_x = np.random.uniform(-0.2,0.1)
     self._robot.Reset(reload_urdf=False,
                       default_motor_angles=initial_motor_angles,
                       reset_time=reset_duration,
-                      default_pose = [0+add_x,0,0.28+self.add_height],
-                      yaw = yaw)
+                      default_pose=[-3.5 + add_x, 0, 0.28 + self.add_height],
+                      yaw=yaw)
 
     footfriction = 1
     basemass = self._robot.GetBaseMassesFromURDF()[0]
@@ -473,10 +491,6 @@ class LocomotionGymEnv(gym.Env):
 
     return self._get_observation(),info
 
-  def GetFootPositionsInBaseFrame(self):
-    #foot 1 frontleft 2 frontright 3 backleft 4 backright
-    pose = self._robot.GetFootPositionsInBaseFrame()
-    return pose
   def step(self, action):
     """Step forward the simulation, given the action.
     Args:
@@ -573,13 +587,21 @@ class LocomotionGymEnv(gym.Env):
     if mode != 'rgb_array':
       raise ValueError('Unsupported render mode:{}'.format(mode))
     base_pos = self._robot.GetBasePosition()
-    view_matrix = self._pybullet_client.computeViewMatrixFromYawPitchRoll(
-        cameraTargetPosition=base_pos,
-        distance=self._camera_dist,
-        yaw=self._camera_yaw,
-        pitch=self._camera_pitch,
-        roll=0,
-        upAxisIndex=2)
+
+    cameraEyePosition = [0, 0, 2]
+    cameraTargetPosition = [0.001, 0, 0]
+
+    cameraUpVector = [0, 0, 1]
+    view_matrix = self._pybullet_client.computeViewMatrix(
+      cameraEyePosition, cameraTargetPosition, cameraUpVector)
+
+    # view_matrix = self._pybullet_client.computeViewMatrixFromYawPitchRoll(
+    #     cameraTargetPosition=base_pos,
+    #     distance=self._camera_dist,
+    #     yaw=self._camera_yaw,
+    #     pitch=self._camera_pitch,
+    #     roll=0,
+    #     upAxisIndex=2)
     proj_matrix = self._pybullet_client.computeProjectionMatrixFOV(
         fov=60,
         aspect=float(self._render_width) / self._render_height,
@@ -594,6 +616,12 @@ class LocomotionGymEnv(gym.Env):
     rgb_array = np.array(px)
     rgb_array = rgb_array[:, :, :3]
     return rgb_array
+
+  def get_terrain_height(self, world_x, world_y):
+    if self.parametric_heightfield == None:
+      return 0.0
+    else:
+      return self.parametric_heightfield.getHeight(world_x, world_y)
 
   def get_ground(self):
     """Get simulation ground model."""

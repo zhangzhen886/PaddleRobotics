@@ -19,6 +19,7 @@ class A1GymEnv(gym.Env):
 
   def __init__(self,
                task="plane",
+               hf_terrain_mode="slope",
                motor_control_mode=robot_config.MotorControlMode.POSITION,
                render=False,
                on_rack=False,
@@ -47,6 +48,7 @@ class A1GymEnv(gym.Env):
       gait=gait,
       normal=normal,
       task_mode=task,
+      hf_terrain_mode=hf_terrain_mode,
       enable_rendering=render,
       action_limit=action_limit,
       sensor_mode=sensor_mode,

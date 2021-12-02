@@ -32,6 +32,7 @@ def build_regular_env(robot_class,  # a1.A1
                       normal = 0,  # Normalisation, (x-mean)/std
                       enable_rendering=False,
                       task_mode = "plane",
+                      hf_terrain_mode = "slope",
                       on_rack = False,
                       filter = 0,
                       action_space = 0,
@@ -87,7 +88,8 @@ def build_regular_env(robot_class,  # a1.A1
                                             robot_sensors=sensors,
                                             random=random,
                                             task=task,
-                                            task_mode=task_mode)
+                                            task_mode=task_mode,
+                                            hf_terrain_mode=hf_terrain_mode)
 
   env = obs_dict_to_array_wrapper.ObservationDictionaryToArrayWrapper(
       env)
