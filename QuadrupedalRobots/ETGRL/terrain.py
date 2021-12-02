@@ -2,7 +2,7 @@ import time
 
 import pybullet
 import numpy as np
-from scipy.interpolate import interp2d
+from scipy.interpolate import interp2d, interp1d
 
 
 def unit(x) -> np.ndarray:
@@ -104,20 +104,44 @@ class RandomUniformTerrain(Terrain):
 class SlopeTerrain(Terrain):
     def __init__(self,
                  bullet_client,
-                 size=15,
-                 downsample=10,
+                 size=10,
+                 downsample=50,
                  resolution=0.02,
                  offset=(0, 0, 0),
                  ):
         super().__init__()
         self.size, self.offset = size, np.asarray(offset, dtype=float)
         sample_resolution = downsample * resolution
+        x = np.arange(-size / 2 - 3 * sample_resolution, size / 2 + 4 * sample_resolution, sample_resolution)
+        y = x.copy()
+        # height_field_downsampled = (x % 2) / 3
+        height_field_downsampled = (np.floor(x / 2) % 2) / 3
+        height_field_downsampled = np.repeat(height_field_downsampled, y.shape[0])
+        self.terrain_func = interp2d(x, y, height_field_downsampled, kind='linear')  # linear, cubic
 
+        data_size = int(size / resolution) + 1
+        x_upsampled = np.linspace(-size / 2, size / 2, data_size)
+        y_upsampled = np.linspace(-size / 2, size / 2, data_size)
+        self.height_field = self.terrain_func(x_upsampled, y_upsampled)
+        terrain_shape = bullet_client.createCollisionShape(
+            shapeType=pybullet.GEOM_HEIGHTFIELD,
+            meshScale=(resolution, resolution, 1.0),
+            heightfieldTextureScaling=size,
+            heightfieldData=self.height_field.reshape(-1),
+            numHeightfieldColumns=data_size, numHeightfieldRows=data_size)
+        self.terrain_id = bullet_client.createMultiBody(0, terrain_shape, -1,
+                                                        self.offset + (0, 0, np.mean(self.height_field).item()),
+                                                        (0, 0, 0, 1))
+        bullet_client.changeVisualShape(self.terrain_id, -1, rgbaColor=(1, 1, 1, 1))
+        bullet_client.changeDynamics(self.terrain_id, -1, lateralFriction=5.0)
+
+    def getHeight(self, x, y):
+        return self.terrain_func(x, y).squeeze() + self.offset[2]
 
 if __name__ == '__main__':
     pybullet.connect(pybullet.GUI)
-    t = RandomUniformTerrain(pybullet, size=2)
-    pybullet.changeVisualShape(t.id, -1, rgbaColor=(1, 1, 1, 1))
+    # t = RandomUniformTerrain(pybullet, size=2)
+    SlopeTerrain(pybullet)
     terrain_visual_shape = pybullet.createVisualShape(shapeType=pybullet.GEOM_SPHERE,
                                                       radius=0.01,
                                                       rgbaColor=(0., 0.8, 0., 0.6))
