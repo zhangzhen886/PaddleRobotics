@@ -448,7 +448,7 @@ def main():
     env = []
     if args.env_nums != 0:
       ENV_NUMS = args.env_nums
-    for i in range(ENV_NUMS):
+    for _ in range(ENV_NUMS):
       a1_env = quadrupedal.A1GymEnv(task=args.task_mode, motor_control_mode=mode_map[args.act_mode], render=render,
                                     on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                                     reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
@@ -469,6 +469,7 @@ def main():
                              enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
   obs_dim = env.observation_space.shape[0]
   action_dim = env.action_space.shape[0]
+  rpm = ReplayMemory(max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
 
   if args.act_mode == "pose":
     act_bound = np.array([0.1, 0.7, 0.7] * 4)
@@ -492,7 +493,6 @@ def main():
     RL_agent.restore(args.resume + ".pt")
   elif args.load != "":
     RL_agent.restore(args.load)
-  rpm = ReplayMemory(max_size=MEMORY_SIZE, obs_dim=obs_dim, act_dim=action_dim)
 
   # training mode
   if not args.eval:
@@ -531,21 +531,20 @@ def main():
 
     config = dict(
       outdir=outdir,
-      task_mode=args.task_mode,
       obs_dim=obs_dim,
-      resume=args.resume,
       etg_path=ETG_path,
-      load_path=args.load,
-      env_nums=ENV_NUMS,
       batch_size=BATCH_SIZE,
       actor_lr=ACTOR_LR,
       critic_lr=CRITIC_LR,
+      args=args,
+      reward_param=reward_param,
+      sensor_param=sensor_param
     )
     log_mode = "online"
     if args.suffix == 'debug':
       log_mode = "disabled"
     # log_mode = "disabled"
-    wandb.init(project="ETG_RL", entity="zhenz1996", config=config, name=suffix, mode=log_mode)
+    wandb.init(project="ETG_RL", entity="zhenz1996", config=config, save_code=True, name=suffix, mode=log_mode)
 
     # init w,b(linear layer params)
     ETG_best_param = ES_solver.get_best_param()
@@ -665,7 +664,7 @@ def main():
     if not os.path.exists(args.load[:-3]):
       os.makedirs(args.load[:-3])
     plot_gait(w, b, ETG_agent, prior_points, args.load[:-3])
-    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b, pub_joint)
+    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 1000, act_bound, w, b, pub_joint)
     # record a video for debuging
     os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     os.system("rm -rf img/*")
@@ -745,11 +744,13 @@ if __name__ == "__main__":
       reward_param = json.load(f)
   elif args.eval != 0:
     load_args = args.load
+    task_mode = args.task_mode
     load_path = os.path.split(args.load)[0]
     args_file = os.path.join(load_path, 'parse_args')
     with open(args_file, 'r') as f:
       args.__dict__ = json.load(f)
     args.load = load_args
+    args.task_mode = task_mode
     args.eval = True
     args.render = True
     param_file = os.path.join(load_path, 'reward_param')
