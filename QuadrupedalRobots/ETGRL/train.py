@@ -244,7 +244,7 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
         batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal = rpm.sample_batch(BATCH_SIZE)
         t3 = time.time()
         rpm_time += t3 - t2
-        critic_loss, actor_loss = agent.learn(
+        critic_loss, actor_loss = agent.learn(  # MujocoAgent
           batch_obs, batch_action, batch_reward, batch_next_obs, batch_terminal)
         learn_time += time.time() - t3
         critic_loss_list.append(critic_loss)
@@ -256,8 +256,8 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     infos["actor_loss"] = np.mean(actor_loss_list)
   # infos["success_rate"] = success_num / episode_steps
   # logger.info('Torso:{} Feet:{} Up:{} Tau:{}'.format(infos['torso'],infos['feet'],infos['up'],infos['tau']))
-  # print("[TrainTime] sample: {:.4f}, step: {:.4f}, rpm: {:.4f}, learn: {:.4f}".format(
-  #   sample_time, step_time, rpm_time, learn_time))
+  print("[TrainTime] sample: {:.4f}, step: {:.4f}, rpm: {:.4f}, learn: {:.4f}".format(
+    sample_time, step_time, rpm_time, learn_time))
   return episode_reward, episode_steps, infos
 
 def run_train_episode1(agent, env, rpm, max_step, action_bound, w=None, b=None):
@@ -530,11 +530,12 @@ def main():
     log_openmode = 'w'
     if args.resume != "":
       outdir = os.path.split(args.resume)[0]
+      suffix = os.path.split(outdir)[1]
       log_openmode = 'a'
     # logger.set_dir(outdir)
+    print("log path: ", outdir)
     logging.basicConfig(filename=os.path.join(outdir, 'log.log'), level=logging.INFO, filemode=log_openmode,
                         format='[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s')
-
     logger.info("---------------------------------------------------------------------------------")
     logger.info("*********************************************************************************")
     logger.info("argv:{}".format(sys.argv))
@@ -679,11 +680,11 @@ def main():
     if not os.path.exists(args.load[:-3]):
       os.makedirs(args.load[:-3])
     plot_gait(w, b, ETG_agent, prior_points, args.load[:-3])
-    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 1000, act_bound, w, b, pub_joint)
+    avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b, pub_joint)
+    print("\033[1;32m[Evaluation] Reward: {} Steps: {}\033[0m".format(avg_reward, avg_step))
     # record a video for debuging
     os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     os.system("rm -rf img/*")
-    print("\033[1;32m[Evaluation] Reward: {} Steps: {}\033[0m".format(avg_reward, avg_step))
 
 
 if __name__ == "__main__":
@@ -696,7 +697,7 @@ if __name__ == "__main__":
   parser.add_argument("--suffix", type=str, default="exp0")
   parser.add_argument("--task_mode", type=str, default="stairstair")
   parser.add_argument("--max_steps", type=int, default=1e7)
-  parser.add_argument("--env_nums", type=int, default=32)
+  parser.add_argument("--env_nums", type=int, default=16)
   parser.add_argument("--learn", type=int, default=8)
   parser.add_argument("--epsilon", type=float, default=0.4)
   parser.add_argument("--gamma", type=float, default=0.95)
@@ -749,11 +750,13 @@ if __name__ == "__main__":
   args = parser.parse_args()
   # resume args from stored files
   if args.resume != "":
+    resume_path = args.resume
     load_path = os.path.split(args.resume)[0]
     args_file = os.path.join(load_path, 'parse_args')
     with open(args_file, 'r') as f:
       args.__dict__ = json.load(f)
     args.eval = False
+    args.resume = resume_path
     # reload the reward param
     param_file = os.path.join(load_path, 'reward_param')
     with open(param_file, 'r') as f:
