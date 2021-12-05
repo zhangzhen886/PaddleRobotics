@@ -232,6 +232,8 @@ class Minitaur(object):
   def _StepInternal(self, action, motor_control_mode):
     t = self.ApplyAction(action, motor_control_mode)
     # print('torques',t)
+    # self._pybullet_client.configureDebugVisualizer(
+    #   self._pybullet_client.COV_ENABLE_SINGLE_STEP_RENDERING)
     self._pybullet_client.stepSimulation()
     self.ReceiveObservation()
     self._state_action_counter += 1

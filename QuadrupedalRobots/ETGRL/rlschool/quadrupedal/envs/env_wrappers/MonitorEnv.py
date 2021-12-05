@@ -16,11 +16,11 @@ Param_Dict = {
   'rew_tau'         : 0.2,
   'rew_done'        : 1,
   'rew_velx'        : 0,
-  'rew_actionrate'  : 0.5,
+  'rew_actionrate'  : 0.2,
   'rew_badfoot'     : 0.1,
   'rew_footcontact' : 0.1,
   'rew_feet_airtime': 0.0,
-  'rew_feet_pos'    : 0.5
+  'rew_feet_pos'    : 2.0
 }
 Random_Param_Dict = {
   'random_dynamics': 0,
@@ -31,7 +31,7 @@ Random_Param_Dict = {
 # call in A1GymEnv.init(), behind "build_regular_env()"
 def EnvWrapper(env, reward_param, sensor_mode, normal=0, ETG_T=0.5, enable_action_filter=False,
                reward_p=1, ETG=1, ETG_path="", ETG_T2=0.5, random_param=None,
-               ETG_H=20, act_mode="traj", vel_d=0.6, vel_mode="max",
+               ETG_H=20, act_mode="traj", vel_d=0.6, vel_mode="max", foot_dx=0.2,
                task_mode="normal", step_y=0.05):
   env = ETGWrapper(env=env, ETG=ETG, ETG_T=ETG_T, ETG_path=ETG_path,
                    ETG_T2=ETG_T2, ETG_H=ETG_H, act_mode=act_mode,
@@ -39,7 +39,7 @@ def EnvWrapper(env, reward_param, sensor_mode, normal=0, ETG_T=0.5, enable_actio
   env = ActionFilterWrapper(env=env, enable_action_filter=enable_action_filter)
   env = RandomWrapper(env=env, random_param=random_param)
   env = ObservationWrapper(env=env, ETG=ETG, sensor_mode=sensor_mode, normal=normal, ETG_H=ETG_H)
-  env = RewardShaping(env=env, reward_param=reward_param, reward_p=reward_p, vel_d=vel_d, vel_mode=vel_mode)
+  env = RewardShaping(env=env, reward_param=reward_param, reward_p=reward_p, vel_d=vel_d, vel_mode=vel_mode, foot_dx=foot_dx)
   return env
 
 
@@ -314,18 +314,19 @@ class ETGWrapper(gym.Wrapper):
 
 
 class RewardShaping(gym.Wrapper):
-  def __init__(self, env, reward_param, reward_p=1, vel_d=0.6, vel_mode="max"):
+  def __init__(self, env, reward_param, reward_p=1, vel_d=0.6, vel_mode="max", foot_dx=0.2):
     gym.Wrapper.__init__(self, env)
     self.reward_param = reward_param
     self.reward_p = reward_p
+    self.vel_d = vel_d
+    self.vel_mode = vel_mode
+    self.foot_dx = foot_dx
     self.last_base10 = np.zeros((10, 3))
     self.robot = self.env.robot
     self.pybullet_client = self.env.pybullet_client
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
-    self.vel_d = vel_d
     self.steps = 0
-    self.vel_mode = vel_mode
     self.yaw_init = 0.0
     self.last_contacts = np.zeros(4)
     self.feet_air_time = np.zeros(4)
@@ -341,6 +342,7 @@ class RewardShaping(gym.Wrapper):
     self.last_contact_position = self.last_footposition
     base_pose = info["base_position"]
     self.last_base10 = np.tile(base_pose, (10, 1))
+    self.feetpos_err = []
     info["foot_position_world"] = copy(self.last_footposition)
     info["scene"] = "plane"
     if "d_yaw" in kwargs.keys():
@@ -425,14 +427,15 @@ class RewardShaping(gym.Wrapper):
     return id
 
   def draw_footstep(self, info):
-    color_list = [[1,0,0], [1,1,0], [0,1,0], [0,0,1]]
+    color_list = [[1,1,0], [1,0,0], [0,0,1], [0,1,0]]
     self.pybullet_client.removeAllUserDebugItems()
     for i in range(self.last_contact_position.shape[0]):
-      contact_pos = self.last_contact_position[i] + [0.3, 0, 0]
+      contact_pos = self.last_contact_position[i] + [self.foot_dx, 0, 0]
       if i % 2 == 1: y_pos = 0.135
       else: y_pos = -0.135
-      self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, y_pos, 0.0],
-                                            lineToXYZ=[contact_pos[0]+0.02, y_pos, 0.0],
+      z_pos = self.env.get_terrain_height(contact_pos[0], y_pos)
+      self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, y_pos, z_pos],
+                                            lineToXYZ=[contact_pos[0]+0.02, y_pos, z_pos],
                                             lineColorRGB=color_list[i], lineWidth=20)
 
   def terminate(self, info):
@@ -485,10 +488,8 @@ class RewardShaping(gym.Wrapper):
     return min(k * r, r)
 
   def c_prec(self, v, t, m):
-    if m < 1e-5:
-      print(m)
-    w = np.arctanh(np.sqrt(0.95)) / m  # 2.89 / m
-    # w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m
+    # w = np.arctanh(np.sqrt(0.95)) / m  # 2.89 / m
+    w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m
     return np.tanh(np.power((v - t) * w, 2))
 
   def re_action_rate(self, action, info):
@@ -556,15 +557,21 @@ class RewardShaping(gym.Wrapper):
     for i in range(first_contact.shape[0]):
       if first_contact[i][0] == True:
         # feet_length_err = np.sum(np.sqrt(np.square(feet_fly_length[i] - np.array([0.3, 0.0, 0.0]))))
-        feet_length_err = np.sqrt(np.sum(np.square([feet_fly_length[i][0]-0.3, abs(contact_position[i][1])-0.135])))
-        rew_feet_length += feet_length_err
+        foot_x, foot_y, foot_z = contact_position[i][0], contact_position[i][1], contact_position[i][2]
+        world_z = self.env.get_terrain_height(foot_x, foot_y)
+        feet_length_err = np.sqrt(np.sum(np.square(
+          [feet_fly_length[i][0]-self.foot_dx, abs(foot_y)-0.135, foot_z-world_z])))
+        # rew_feet_length += feet_length_err
+        rew_feet_length += (-self.c_prec(feet_length_err, 0, 0.05))
+        self.feetpos_err.append(feet_length_err)
+        # print("Average feetpos error: ", np.mean(self.feetpos_err))
         # if i == 0:
         #   print(feet_length_err)
         self.last_contact_position[i] = contact_position[i]
       # if lift_contact[i] == True:
       #   self.last_contact_position[i] = contact_position[i]
-    # rew_feet_length = 1 - self.c_prec(rew_feet_length, 0, 0.1)
-    rew_feet_length = -self.c_prec(rew_feet_length, 0, 0.1)
+    # rew_feet_length = 1 - self.c_prec(rew_feet_length, 0, 0.1)  # positive reward
+    # rew_feet_length = -self.c_prec(rew_feet_length, 0, 0.1)  # negative penalty
     return rew_feet_length
 
   def get_foot_world(self, info={}):

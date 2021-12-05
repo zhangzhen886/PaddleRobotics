@@ -53,7 +53,7 @@ ES_TRAIN_STEPS = 10
 # PER_EPISODE = 3
 # EVAL_EPISODES = 1
 MEMORY_SIZE = int(1e6)
-BATCH_SIZE = 256
+BATCH_SIZE = 512
 GAMMA = 0.99
 TAU = 0.005
 ALPHA = 0.2  # determines the relative importance of entropy term against the reward
@@ -256,8 +256,8 @@ def run_train_episode(agent, env, rpm, max_step, action_bound, w=None, b=None):
     infos["actor_loss"] = np.mean(actor_loss_list)
   # infos["success_rate"] = success_num / episode_steps
   # logger.info('Torso:{} Feet:{} Up:{} Tau:{}'.format(infos['torso'],infos['feet'],infos['up'],infos['tau']))
-  print("[TrainTime] sample: {:.4f}, step: {:.4f}, rpm: {:.4f}, learn: {:.4f}".format(
-    sample_time, step_time, rpm_time, learn_time))
+  # print("[TrainTime] sample: {:.4f}, step: {:.4f}, rpm: {:.4f}, learn: {:.4f}".format(
+  #   sample_time, step_time, rpm_time, learn_time))
   return episode_reward, episode_steps, infos
 
 def run_train_episode1(agent, env, rpm, max_step, action_bound, w=None, b=None):
@@ -468,7 +468,7 @@ def main():
                                     render=render, on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                                     reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                                     ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
-                                    vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
+                                    vel_d=args.vel_d, foot_dx=0.2, step_y=args.step_y, reward_p=args.reward_p,
                                     enable_action_filter=args.enable_action_filter,
                                     action_repeat=args.action_repeat_num)
       env.append(a1_env)
@@ -480,7 +480,7 @@ def main():
                              render=render, on_rack=False, sensor_mode=sensor_param, normal=args.normal,
                              reward_param=reward_param, random_param=random_param, dynamic_param=dynamic_param,
                              ETG=args.ETG, ETG_T=args.ETG_T, ETG_H=args.ETG_H, ETG_path=ETG_path,
-                             vel_d=args.vel_d, step_y=args.step_y, reward_p=args.reward_p,
+                             vel_d=args.vel_d, foot_dx=0.2, step_y=args.step_y, reward_p=args.reward_p,
                              enable_action_filter=args.enable_action_filter, action_repeat=args.action_repeat_num)
   obs_dim = env.observation_space.shape[0]
   action_dim = env.action_space.shape[0]
@@ -532,11 +532,21 @@ def main():
       outdir = os.path.split(args.resume)[0]
       suffix = os.path.split(outdir)[1]
       log_openmode = 'a'
-    # logger.set_dir(outdir)
-    print("log path: ", outdir)
-    logging.basicConfig(filename=os.path.join(outdir, 'log.log'), level=logging.INFO, filemode=log_openmode,
-                        format='[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s')
+    # logging.basicConfig(filename=os.path.join(outdir, 'log.log'), level=logging.INFO, filemode=log_openmode,
+    #                     format='[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s')
+    logger.setLevel(logging.DEBUG)
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter('[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s',
+                                      datefmt='%H:%M:%S'))
+    sh.setLevel(logging.WARNING)
+    logger.addHandler(sh)
+    th = logging.FileHandler(filename=os.path.join(outdir, 'log.log'), mode=log_openmode)
+    th.setFormatter(logging.Formatter('[%(asctime)s %(threadName)s @%(filename)s:%(lineno)d] %(message)s',
+                                      datefmt='%m-%d %H:%M:%S'))
+    th.setLevel(logging.INFO)
+    logger.addHandler(th)
     logger.info("---------------------------------------------------------------------------------")
+    logger.warning("log path: " + outdir)
     logger.info("*********************************************************************************")
     logger.info("argv:{}".format(sys.argv))
     logger.info("args:{}".format(args))
@@ -585,7 +595,8 @@ def main():
       wandb.log({'train/episode_step': episode_step}, step=total_steps)
       for key in info.keys():
         wandb.log({'train/episode_{}'.format(key): info[key]}, step=total_steps)
-        wandb.log({'train/mean_{}'.format(key): info[key] / episode_step}, step=total_steps)
+        if key in reward_param.keys() and reward_param[key] != 0:
+          wandb.log({'train/mean_{}'.format(key): info[key] / reward_param[key] / episode_step}, step=total_steps)
       logger.info('[Training] Total Steps: {} Reward: {} Steps: {} '.format(
         total_steps, episode_reward, episode_step))
 
@@ -598,10 +609,9 @@ def main():
           wandb.log({'eval/episode_step': avg_step}, step=total_steps)
           for key in info.keys():
             wandb.log({'eval/episode_{}'.format(key): info[key]}, step=total_steps)
-            wandb.log({'eval/mean_{}'.format(key): info[key] / avg_step}, step=total_steps)
-          logger.info('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
-            total_steps, avg_reward, avg_step))
-          print('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
+            if key in reward_param.keys() and reward_param[key] != 0:
+              wandb.log({'eval/mean_{}'.format(key): info[key] / reward_param[key] / avg_step}, step=total_steps)
+          logger.warning('[Evaluation] Over: {} episodes, Reward: {} Steps: {} '.format(
             total_steps, avg_reward, avg_step))
         if e_step < 600:
           e_step += 50
@@ -682,6 +692,14 @@ def main():
     plot_gait(w, b, ETG_agent, prior_points, args.load[:-3])
     avg_reward, avg_step, info = run_evaluate_episodes(RL_agent, env, 600, act_bound, w, b, pub_joint)
     print("\033[1;32m[Evaluation] Reward: {} Steps: {}\033[0m".format(avg_reward, avg_step))
+    print("total reward: ", info)
+    origin_rew = {}
+    for key in info.keys():
+      if Param_Dict[key] != 0.0:
+        origin_rew[key] = info[key] / reward_param[key]
+      else:
+        origin_rew[key] = 0.0
+    print("origin reward: ", origin_rew)
     # record a video for debuging
     os.system("ffmpeg -r 100 -i img/img%01d.jpg -vcodec mpeg4 -vb 40M -y {}.mp4".format(outdir))
     os.system("rm -rf img/*")
@@ -718,6 +736,7 @@ if __name__ == "__main__":
   parser.add_argument("--ETG_T2", type=float, default=0.5)
   parser.add_argument("--ETG_path", type=str, default="None")
   parser.add_argument("--vel_d", type=float, default=0.5)
+  parser.add_argument("--foot_dx", type=float, default=0.2)
   parser.add_argument("--step_y", type=float, default=0.05)
   parser.add_argument("--reward_p", type=float, default=5)
   parser.add_argument("--enable_action_filter", type=int, default=0)
