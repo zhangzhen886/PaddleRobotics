@@ -82,6 +82,7 @@ class LocomotionGymEnv(gym.Env):
     """
     self.env_info = [[-100,100,np.array([1,0,0,0,0,0,0])]]
     self.add_height = 0
+    self.robot_pos = [0.0, 0.0, 0.0]
     self.seed()
     self.stepheight = 0.05
     self.stepwidth = 0.33
@@ -271,12 +272,21 @@ class LocomotionGymEnv(gym.Env):
         if hf_terrain == "rough":
           self.parametric_heightfield = ht.RandomUniformTerrain(self._pybullet_client, size=10)
           self.add_height = 0.05
+          robot_x, robot_y = -3.5, 0.0
+          x_range, y_range = (-0.3, 0.3), (-0.1, 0.1)
+          x_range = np.array(x_range) + robot_x
+          y_range = np.array(y_range) + robot_y
+          self.robot_pos = [robot_x, robot_y, 0.27 + self.parametric_heightfield.getMaxHeightInRange(x_range, y_range)[2]]
         elif hf_terrain == "slope":
           self.parametric_heightfield = ht.SlopeTerrain(self._pybullet_client, size=10)
           self.add_height = 0.0
+          robot_x, robot_y = -3.5, 0.0
+          self.robot_pos = [robot_x, robot_y, 0.28 + self.add_height]
         else:
           self.parametric_heightfield = ht.PlainTerrain(self._pybullet_client)
           self.add_height = 0.0
+          robot_x, robot_y = -3.5, 0.0
+          self.robot_pos = [robot_x, robot_y, 0.28 + self.add_height]
       else:
         ground = self._pybullet_client.loadURDF("plane_implicit.urdf")
         self._pybullet_client.changeDynamics(ground, -1, lateralFriction=5)
@@ -370,7 +380,7 @@ class LocomotionGymEnv(gym.Env):
     self._robot.Reset(reload_urdf=False,
                       default_motor_angles=initial_motor_angles,
                       reset_time=reset_duration,
-                      default_pose=[-3.5 + add_x, 0, 0.28 + self.add_height],
+                      default_pose=self.robot_pos,
                       yaw=yaw)
 
     footfriction = 1
