@@ -16,11 +16,11 @@ Param_Dict = {
   'rew_tau'         : 0.2,
   'rew_done'        : 1,
   'rew_velx'        : 0,
-  'rew_actionrate'  : 0.2,
+  'rew_actionrate'  : 0.5,
   'rew_badfoot'     : 0.1,
   'rew_footcontact' : 0.1,
   'rew_feet_airtime': 0.0,
-  'rew_feet_pos'    : 2.0
+  'rew_feet_pos'    : 4.0
 }
 Random_Param_Dict = {
   'random_dynamics': 0,
@@ -402,7 +402,8 @@ class RewardShaping(gym.Wrapper):
       v = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
     else:
       v = (np.array(info["base_position"]) - np.array(last_basepose)) / self.env.env_time_step
-    k = 1 - self.c_prec(min(v[0], self.vel_d), self.vel_d, 0.5)
+    # k = 1 - self.c_prec(min(v[0], self.vel_d), self.vel_d, 0.5)
+    k = 1.0
     info['rew_torso'] = self.reward_param['rew_torso'] * self.re_torso(info, last_basepose=last_basepose)  # base velocity
     info['rew_up'] = self.reward_param['rew_up'] * self.re_up(info) * k  # roll and pitch
     info['rew_feet_vel'] = self.reward_param['rew_feet_vel'] * self.re_feet_velocity(info, last_footposition=last_footposition)  # foot velocity
@@ -471,7 +472,7 @@ class RewardShaping(gym.Wrapper):
     pose = copy(info["rot_euler"])
     roll = pose[0]
     pitch = pose[1]
-    if env_vec[0]:
+    if env_vec[0]:  ## TODO: process heightfield terrain
       pitch += abs(env_vec[4])
     elif env_vec[1]:
       pitch -= abs(env_vec[4])
@@ -562,7 +563,7 @@ class RewardShaping(gym.Wrapper):
         feet_length_err = np.sqrt(np.sum(np.square(
           [feet_fly_length[i][0]-self.foot_dx, abs(foot_y)-0.135, foot_z-world_z])))
         # rew_feet_length += feet_length_err
-        rew_feet_length += (-self.c_prec(feet_length_err, 0, 0.05))
+        rew_feet_length += (1-self.c_prec(feet_length_err, 0, 0.1))
         self.feetpos_err.append(feet_length_err)
         # print("Average feetpos error: ", np.mean(self.feetpos_err))
         # if i == 0:
@@ -570,6 +571,7 @@ class RewardShaping(gym.Wrapper):
         self.last_contact_position[i] = contact_position[i]
       # if lift_contact[i] == True:
       #   self.last_contact_position[i] = contact_position[i]
+
     # rew_feet_length = 1 - self.c_prec(rew_feet_length, 0, 0.1)  # positive reward
     # rew_feet_length = -self.c_prec(rew_feet_length, 0, 0.1)  # negative penalty
     return rew_feet_length
