@@ -51,10 +51,10 @@ PI = math.pi
 
 MAX_MOTOR_ANGLE_CHANGE_PER_STEP = 0.2
 _DEFAULT_HIP_POSITIONS = (
-    (0.17, -0.135, 0),
-    (0.17, 0.13, 0),
-    (-0.195, -0.135, 0),
-    (-0.195, 0.13, 0),
+    (0.183, -0.047, 0),
+    (0.183, 0.047, 0),
+    (-0.183, -0.047, 0),
+    (-0.183, 0.047, 0),
 )
 
 # COM_OFFSET = -np.array([0.012731, 0.002186, 0.000515])
@@ -73,9 +73,9 @@ BASE_FOOT = np.array([0.18, -0.132, -0.23,
 
 ABDUCTION_P_GAIN = 80.0
 ABDUCTION_D_GAIN = 1.
-HIP_P_GAIN = 80.0
+HIP_P_GAIN = 120.0
 HIP_D_GAIN = 2.0
-KNEE_P_GAIN = 80.0
+KNEE_P_GAIN = 120.0
 KNEE_D_GAIN = 2.0
 
 # Bases on the readings from Laikago's default pose.
@@ -87,7 +87,7 @@ LOWER_NAME_PATTERN = re.compile(r"\w+_lower_\w+")
 TOE_NAME_PATTERN = re.compile(r"\w+_toe\d*")
 IMU_NAME_PATTERN = re.compile(r"imu\d*")
 
-URDF_FILENAME = "a1/a1.urdf"
+URDF_FILENAME = "/home/zhenz/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/a1/a1.urdf"
 
 _BODY_B_FIELD_NUMBER = 2
 _LINK_A_FIELD_NUMBER = 3
