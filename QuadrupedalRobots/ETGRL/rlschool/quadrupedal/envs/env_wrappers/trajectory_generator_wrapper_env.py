@@ -75,13 +75,11 @@ class TrajectoryGeneratorWrapperEnv(object):
     # new_action = input_action(NN_act+ETG_act) + init_joint_pose(0.0,0.9,-1.8)
     new_action = self._trajectory_generator.get_action(
         self._gym_env.robot.GetTimeSinceReset(), action)
-    init_pose = self._trajectory_generator._pose
-
     # Step forward the simulation, given the action.
     original_observation, reward, done, info = self._gym_env.step(new_action)
-
     # print("NN action:", action)
     # print("TG action:", new_action)
     info['real_action'] = new_action
-    info['init_act'] = init_pose
+    info['init_act'] = self._trajectory_generator._pose
+
     return self._modify_observation(original_observation)[0], reward, done, info

@@ -57,10 +57,19 @@ _DEFAULT_HIP_POSITIONS = (
     (-0.195, 0.13, 0),
 )
 
-COM_OFFSET = -np.array([0.012731, 0.002186, 0.000515])
+# COM_OFFSET = -np.array([0.012731, 0.002186, 0.000515])
+COM_OFFSET = -np.array([0.0, 0.0, 0.0])
 HIP_OFFSETS = np.array([[0.183, -0.047, 0.], [0.183, 0.047, 0.],
                         [-0.183, -0.047, 0.], [-0.183, 0.047, 0.]
                         ]) + COM_OFFSET
+# BASE_FOOT = np.array([0.18, -0.15, -0.23,
+#                       0.18, 0.148, -0.23,
+#                       -0.18, -0.14, -0.23,
+#                       -0.18, 0.135, -0.23])
+BASE_FOOT = np.array([0.18, -0.132, -0.23,
+                      0.18, 0.132, -0.23,
+                      -0.18, -0.132, -0.23,
+                      -0.18, 0.132, -0.23])
 
 ABDUCTION_P_GAIN = 80.0
 ABDUCTION_D_GAIN = 1.
@@ -261,7 +270,8 @@ class A1(minitaur.Minitaur):
         on_rack=on_rack,
         enable_action_interpolation=enable_action_interpolation,
         enable_action_filter=enable_action_filter,
-        reset_time=reset_time)
+        reset_time=reset_time,
+    )
 
   def _LoadRobotURDF(self):
     a1_urdf_path = self.GetURDFFile()
@@ -385,6 +395,27 @@ class A1(minitaur.Minitaur):
   def GetURDFFile(self):
     return self._urdf_filename
 
+  def _RecordMassInfoFromURDF(self):
+    """Records the mass information from the URDF file."""
+    self._base_mass_urdf = []
+    for chassis_id in self._chassis_link_ids:
+      self._base_mass_urdf.append(
+          self._pybullet_client.getDynamicsInfo(self.quadruped, chassis_id)[0])
+    self._leg_masses_urdf = []
+    for hip_id in self._hip_link_ids:
+      self._leg_masses_urdf.append(
+          self._pybullet_client.getDynamicsInfo(self.quadruped, hip_id)[0])
+    for motor_id in self._upper_link_ids:
+      self._leg_masses_urdf.append(
+          self._pybullet_client.getDynamicsInfo(self.quadruped, motor_id)[0])
+    for lower_id in self._lower_link_ids:
+      self._leg_masses_urdf.append(
+        self._pybullet_client.getDynamicsInfo(self.quadruped, lower_id)[0])
+    for foot_id in self._foot_link_ids:
+      self._leg_masses_urdf.append(
+        self._pybullet_client.getDynamicsInfo(self.quadruped, foot_id)[0])
+    self._robot_mass = np.sum(self._base_mass_urdf) + np.sum(self._leg_masses_urdf)
+
   def _BuildUrdfIds(self):
     """Build the link Ids from its name in the URDF file.
        Called in the "Reset()" func
@@ -392,11 +423,12 @@ class A1(minitaur.Minitaur):
       ValueError: Unknown category of the joint name.
     """
     num_joints = self.pybullet_client.getNumJoints(self.quadruped)  # 21=4*5+1
-    self._hip_link_ids = [-1]  # '_hip_joint, _hip_fixed': 1, 2, 6, 7, 11, 12, 16, 17
-    self._leg_link_ids = []  # 4, 5, 9, 10, 14, 15, 19, 20
-    self._motor_link_ids = []  # '_upper_joint': 3, 8, 13, 18
+    self._hip_link_ids = []  # '_hip_joint, _hip_fixed': 1, 2, 6, 7, 11, 12, 16, 17
+    self._upper_link_ids = []  # '_upper_joint': 3, 8, 13, 18
     self._lower_link_ids = []  # 'lower_joint': 4, 9, 14, 19
     self._foot_link_ids = []  # '_toe_fixed': 5, 10, 15, 20
+    self._motor_link_ids = []  # 1, 2, 6, 7, 11, 12, 16, 17
+    self._leg_link_ids = []  # 4, 5, 9, 10, 14, 15, 19, 20
     self._imu_link_ids = []  # 0
 
     for i in range(num_joints):
@@ -406,7 +438,7 @@ class A1(minitaur.Minitaur):
       if HIP_NAME_PATTERN.match(joint_name):
         self._hip_link_ids.append(joint_id)
       elif UPPER_NAME_PATTERN.match(joint_name):
-        self._motor_link_ids.append(joint_id)
+        self._upper_link_ids.append(joint_id)
       # We either treat the lower leg or the toe as the foot link, depending on
       # the urdf version used.
       elif LOWER_NAME_PATTERN.match(joint_name):
@@ -419,14 +451,16 @@ class A1(minitaur.Minitaur):
       else:
         raise ValueError("Unknown category of joint %s" % joint_name)
 
+    self._motor_link_ids.extend(self._hip_link_ids)
     self._leg_link_ids.extend(self._lower_link_ids)
     self._leg_link_ids.extend(self._foot_link_ids)
 
     #assert len(self._foot_link_ids) == NUM_LEGS
     self._hip_link_ids.sort()
-    self._motor_link_ids.sort()
+    self._upper_link_ids.sort()
     self._lower_link_ids.sort()
     self._foot_link_ids.sort()
+    self._motor_link_ids.sort()
     self._leg_link_ids.sort()
 
   def _GetMotorNames(self):
@@ -458,6 +492,69 @@ class A1(minitaur.Minitaur):
     """Get default initial joint pose."""
     joint_pose = (INIT_MOTOR_ANGLES + JOINT_OFFSETS) * JOINT_DIRECTIONS
     return joint_pose
+
+  def SetLegMasses(self, leg_masses):
+    """Set the mass of the legs.
+
+    A leg includes leg_link and motor. 4 legs contain 16 links (4 links each)
+    and 8 motors. First 16 numbers correspond to link masses, last 8 correspond
+    to motor masses (24 total).
+
+    Args:
+      leg_masses: The leg and motor masses for all the leg links and motors.
+
+    Raises:
+      ValueError: It is raised when the length of masses is not equal to number
+        of links + motors.
+    """
+    return
+    if len(leg_masses) != len(self._leg_link_ids) + len(self._motor_link_ids):
+      raise ValueError("The number of values passed to SetLegMasses are "
+                       "different than number of leg links and motors.")
+    for leg_id, leg_mass in zip(self._leg_link_ids, leg_masses):
+      self._pybullet_client.changeDynamics(self.quadruped,
+                                           leg_id,
+                                           mass=leg_mass)
+    motor_masses = leg_masses[len(self._leg_link_ids):]
+    for link_id, motor_mass in zip(self._motor_link_ids, motor_masses):
+      self._pybullet_client.changeDynamics(self.quadruped,
+                                           link_id,
+                                           mass=motor_mass)
+
+  def SetLegInertias(self, leg_inertias):
+    """Set the inertias of the legs.
+
+    A leg includes leg_link and motor. 4 legs contain 16 links (4 links each)
+    and 8 motors. First 16 numbers correspond to link inertia, last 8 correspond
+    to motor inertia (24 total).
+
+    Args:
+      leg_inertias: The leg and motor inertias for all the leg links and motors.
+
+    Raises:
+      ValueError: It is raised when the length of inertias is not equal to
+      the number of links + motors or leg_inertias contains negative values.
+    """
+    return
+    if len(leg_inertias) != len(self._leg_link_ids) + len(self._motor_link_ids):
+      raise ValueError("The number of values passed to SetLegMasses are "
+                       "different than number of leg links and motors.")
+    for leg_id, leg_inertia in zip(self._leg_link_ids, leg_inertias):
+      for inertia_value in leg_inertias:
+        if (np.asarray(inertia_value) < 0).any():
+          raise ValueError("Values in inertia matrix should be non-negative.")
+      self._pybullet_client.changeDynamics(self.quadruped,
+                                           leg_id,
+                                           localInertiaDiagonal=leg_inertia)
+
+    motor_inertias = leg_inertias[len(self._leg_link_ids):]
+    for link_id, motor_inertia in zip(self._motor_link_ids, motor_inertias):
+      for inertia_value in motor_inertias:
+        if (np.asarray(inertia_value) < 0).any():
+          raise ValueError("Values in inertia matrix should be non-negative.")
+      self._pybullet_client.changeDynamics(self.quadruped,
+                                           link_id,
+                                           localInertiaDiagonal=motor_inertia)
 
   def ApplyAction(self, motor_commands, motor_control_mode=None):
     """Clips and then apply the motor commands using the motor model.

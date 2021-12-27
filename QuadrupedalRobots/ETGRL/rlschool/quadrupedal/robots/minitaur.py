@@ -639,6 +639,48 @@ class Minitaur(object):
                                           self._observation_noise_stdev[3])
     return roll_pitch_yaw
 
+  def GetTrueBaseRollPitchYawRate(self):
+    """Get the rate of orientation change of the minitaur's base in euler angle.
+
+    Returns:
+      rate of (roll, pitch, yaw) change of the minitaur's base.
+    """
+    angular_velocity = self._pybullet_client.getBaseVelocity(self.quadruped)[1]
+    orientation = self.GetTrueBaseOrientation()
+    return self.TransformAngularVelocityToLocalFrame(angular_velocity,
+                                                     orientation)
+
+  def GetBaseRollPitchYawRate(self):
+    """Get the rate of orientation change of the minitaur's base in euler angle.
+
+    This function mimicks the noisy sensor reading and adds latency.
+    Returns:
+      rate of (roll, pitch, yaw) change of the minitaur's base polluted by noise
+      and latency.
+    """
+    return self._AddSensorNoise(
+      np.array(self._control_observation[3 * self.num_motors +
+                                         4:3 * self.num_motors + 7]),
+      self._observation_noise_stdev[4])
+
+  def GetTrueBaseOrientation(self):
+    """Get the orientation of minitaur's base, represented as quaternion.
+
+    Returns:
+      The orientation of minitaur's base.
+    """
+    return self._base_orientation
+
+  def GetBaseOrientation(self):
+    """Get the orientation of minitaur's base, represented as quaternion.
+
+    This function mimicks the noisy sensor reading and adds latency.
+    Returns:
+      The orientation of minitaur's base polluted by noise and latency.
+    """
+    return self._pybullet_client.getQuaternionFromEuler(
+        self.GetBaseRollPitchYaw())
+
   def GetHipPositionsInBaseFrame(self):
     """Get the hip joint positions of the robot within its base frame."""
     raise NotImplementedError("Not implemented for Minitaur.")
@@ -831,34 +873,16 @@ class Minitaur(object):
         self.GetMotorTorques(),
         self.GetMotorVelocities())) * self.time_step * self._action_repeat
 
-  def GetTrueBaseOrientation(self):
-    """Get the orientation of minitaur's base, represented as quaternion.
+  def GetRobotMass(self):
+    total_mass = np.sum(self._base_mass_urdf) + np.sum(self._leg_masses_urdf)
+    return total_mass
 
-    Returns:
-      The orientation of minitaur's base.
-    """
-    return self._base_orientation
-
-  def GetBaseOrientation(self):
-    """Get the orientation of minitaur's base, represented as quaternion.
-
-    This function mimicks the noisy sensor reading and adds latency.
-    Returns:
-      The orientation of minitaur's base polluted by noise and latency.
-    """
-    return self._pybullet_client.getQuaternionFromEuler(
-        self.GetBaseRollPitchYaw())
-
-  def GetTrueBaseRollPitchYawRate(self):
-    """Get the rate of orientation change of the minitaur's base in euler angle.
-
-    Returns:
-      rate of (roll, pitch, yaw) change of the minitaur's base.
-    """
-    angular_velocity = self._pybullet_client.getBaseVelocity(self.quadruped)[1]
-    orientation = self.GetTrueBaseOrientation()
-    return self.TransformAngularVelocityToLocalFrame(angular_velocity,
-                                                     orientation)
+  def GetCostOfTransport(self):
+    # torque = self.GetTrueMotorTorques()
+    # vel = self.GetTrueMotorVelocities()
+    tv = self.GetTrueMotorTorques() * self.GetTrueMotorVelocities()
+    tv[tv < 0] = 0
+    return tv.sum() / (np.linalg.norm(self.GetBaseVelocity()) * self.GetRobotMass() * 9.8)
 
   def TransformAngularVelocityToLocalFrame(self, angular_velocity,
                                            orientation):
@@ -882,19 +906,6 @@ class Minitaur(object):
         [0, 0, 0], orientation_inversed, angular_velocity,
         self._pybullet_client.getQuaternionFromEuler([0, 0, 0]))
     return np.asarray(relative_velocity)
-
-  def GetBaseRollPitchYawRate(self):
-    """Get the rate of orientation change of the minitaur's base in euler angle.
-
-    This function mimicks the noisy sensor reading and adds latency.
-    Returns:
-      rate of (roll, pitch, yaw) change of the minitaur's base polluted by noise
-      and latency.
-    """
-    return self._AddSensorNoise(
-        np.array(self._control_observation[3 * self.num_motors +
-                                           4:3 * self.num_motors + 7]),
-        self._observation_noise_stdev[4])
 
   def GetActionDimension(self):
     """Get the length of the action list.

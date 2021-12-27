@@ -383,11 +383,14 @@ class LocomotionGymEnv(gym.Env):
                       default_pose=self.robot_pos,
                       yaw=yaw)
 
-    footfriction = 1
+    control_latency = 0.002
+    footfriction = 1.0
     basemass = self._robot.GetBaseMassesFromURDF()[0]
-    baseinertia = self._robot.GetBaseInertiasFromURDF()
+    baseinertia = self._robot.GetBaseInertiasFromURDF()[0]
     legmass = self._robot.GetLegMassesFromURDF()
     leginertia = self._robot.GetLegInertiasFromURDF()
+    motor_kp = np.zeros(12)
+    motor_kd = np.zeros(12)
     gravity = np.array([0,0,-10])
     # joint_friction_vec = np.zeros(12)
     # spin_friction = 0
@@ -398,64 +401,65 @@ class LocomotionGymEnv(gym.Env):
         dynamic_param = copy.deepcopy(self.param)
         # print(dynamic_param)
       if 'control_latency' in dynamic_param.keys():
-        self._robot.SetControlLatency(0.001*dynamic_param['control_latency'])
+        control_latency = 0.001 * dynamic_param['control_latency']
       if 'footfriction' in dynamic_param.keys():
         footfriction = dynamic_param['footfriction']
       if 'basemass' in dynamic_param.keys():
-        basemass *= dynamic_param['basemass']
+        basemass = [basemass * dynamic_param['basemass']]
       if 'baseinertia' in dynamic_param.keys():
         baseinertia_ratio = dynamic_param['baseinertia']
-        baseinertia = baseinertia[0]
-        baseinertia = [(baseinertia[0]*baseinertia_ratio[0],baseinertia[1]*baseinertia_ratio[1],baseinertia[2]*baseinertia_ratio[2])]
+        baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
+                        baseinertia[1] * baseinertia_ratio[1],
+                        baseinertia[2] * baseinertia_ratio[2])]
       if 'legmass' in dynamic_param.keys():
         legmass_ratio = dynamic_param['legmass']
-        legmass = legmass*np.array([legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*4)
+        legmass = legmass * np.array([legmass_ratio[0],legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*5)
       if 'leginertia' in dynamic_param.keys():
         leginertia_ratio = dynamic_param['leginertia']
         leginertia_new = []
         for i in range(12):
-          leginertia_new.append((leginertia_ratio[i]*leginertia[i][0],
-                                leginertia_ratio[i]*leginertia[i][1],
-                                leginertia_ratio[i]*leginertia[i][2]))
+          leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
+                                 leginertia_ratio[i] * leginertia[i][1],
+                                 leginertia_ratio[i] * leginertia[i][2]))
         leginertia = copy.deepcopy(leginertia_new)
       if 'motor_kp' in dynamic_param.keys() and 'motor_kd' in dynamic_param.keys():
         motor_kp = dynamic_param['motor_kp']
         motor_kd = dynamic_param['motor_kd']
-        self._robot.SetMotorGains(motor_kp,motor_kd)
       if 'gravity' in dynamic_param.keys():
         gravity = dynamic_param['gravity']
     else:
-      control_latency = np.random.uniform(0.035,0.045)
-      self._robot.SetControlLatency(control_latency)
-      footfriction = np.random.uniform(1,2)
-      basemass_ratio = np.random.uniform(0.8,1.2)
-      basemass = basemass*basemass_ratio
-      baseinertia_ratio = np.random.uniform([0.3,1.3,0.5],[0.7,1.7,1.5],3)
-      baseinertia = baseinertia[0]
-      baseinertia = [(baseinertia[0]*baseinertia_ratio[0],baseinertia[1]*baseinertia_ratio[1],baseinertia[2]*baseinertia_ratio[2])]
-      legmass_ratio = np.random.uniform([1,1.1,0.8],[1.4,1.5,1.6],3)
-      legmass = legmass*np.array([legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*4)
-      leginertia_ratio = np.random.uniform([0.8,0.55,0.69,1.4,1.33,0.5,1.37,0.48,1.06,1.39,1.4,1.4],
-                                          [1.4,0.75,0.99,1.6,1.53,0.8,1.57,0.68,1.46,1.59,1.6,1.6],12)
+      control_latency = np.random.uniform(0.035, 0.045)
+      footfriction = np.random.uniform(1, 2)
+      basemass_ratio = np.random.uniform(0.8, 1.2)
+      basemass = [basemass * basemass_ratio]
+      baseinertia_ratio = np.random.uniform([0.3, 1.3, 0.5], [0.7, 1.7, 1.5], 3)
+      baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
+                      baseinertia[1] * baseinertia_ratio[1],
+                      baseinertia[2] * baseinertia_ratio[2])]
+      legmass_ratio = np.random.uniform([1, 1.1, 0.8], [1.4, 1.5, 1.6], 3)
+      legmass = legmass * np.array([legmass_ratio[0], legmass_ratio[1], legmass_ratio[2]] * 4)
+      leginertia_ratio = np.random.uniform([0.8, 0.55, 0.69, 1.4, 1.33, 0.5, 1.37, 0.48, 1.06, 1.39, 1.4, 1.4],
+                                           [1.4, 0.75, 0.99, 1.6, 1.53, 0.8, 1.57, 0.68, 1.46, 1.59, 1.6, 1.6], 12)
       leginertia_new = []
       for i in range(12):
-        leginertia_new.append((leginertia_ratio[i]*leginertia[i][0],
-                              leginertia_ratio[i]*leginertia[i][1],
-                              leginertia_ratio[i]*leginertia[i][2]))
+        leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
+                               leginertia_ratio[i] * leginertia[i][1],
+                               leginertia_ratio[i] * leginertia[i][2]))
       leginertia = copy.deepcopy(leginertia_new)
-      motor_kp = np.random.uniform([83,89,83,65,100,73,68,78,76,67,74,66],
-                                  [109,109,109,109,106,97,90,80,100,99,80,109],12)
-      motor_kd = np.random.normal([1.1,2.9,2.15,1.8,3.19,1.8,1.1,3.99,1.7,1.2,3.99,2.7],
-                                  [1.9,3.1,2.85,2.0,3.21,2.2,1.9,4.01,2.1,2.0,4.01,3.9],12)
-      self._robot.SetMotorGains(motor_kp,motor_kd)
-      gravity = np.random.uniform([-1,-1,8],[1,1,12],size=3)
+      motor_kp = np.random.uniform([83, 89, 83, 65, 100, 73, 68, 78, 76, 67, 74, 66],
+                                   [109, 109, 109, 109, 106, 97, 90, 80, 100, 99, 80, 109], 12)
+      motor_kd = np.random.normal([1.1, 2.9, 2.15, 1.8, 3.19, 1.8, 1.1, 3.99, 1.7, 1.2, 3.99, 2.7],
+                                  [1.9, 3.1, 2.85, 2.0, 3.21, 2.2, 1.9, 4.01, 2.1, 2.0, 4.01, 3.9], 12)
+      gravity = np.random.uniform([-1, -1, 8], [1, 1, 12], size=3)
 
-    self._pybullet_client.setGravity(gravity[0],gravity[1],gravity[2])
-    self._robot.SetFootFriction(footfriction)
-    self._robot.SetBaseMasses([basemass])
-    self._robot.SetBaseInertias(baseinertia)
-    self._robot.SetLegMasses(legmass)
-    self._robot.SetLegInertias(leginertia)
+    # self._robot.SetControlLatency(control_latency)
+    # self._robot.SetFootFriction(footfriction)
+    # self._robot.SetBaseMasses(basemass)
+    # self._robot.SetBaseInertias(baseinertia)
+    # self._robot.SetLegMasses(legmass)
+    # self._robot.SetLegInertias(leginertia)
+    # self._robot.SetMotorGains(motor_kp, motor_kd)
+    # self._pybullet_client.setGravity(gravity[0], gravity[1], gravity[2])
     self._pybullet_client.setPhysicsEngineParameter(enableConeFriction=0)
     self._env_step_counter = 0
     if reset_visualization_camera:
@@ -590,6 +594,7 @@ class LocomotionGymEnv(gym.Env):
     info["joint_angle"] = self._robot.GetMotorAngles()
     info["env_info"] = self.env_info  # [lastx, basex, env_vec] in "upstair_terrain"
     info["energy"] = self._robot.GetEnergyConsumptionPerControlStep()
+    info["transport_cost"] = self._robot.GetCostOfTransport()
     info["latency"] = self._robot.GetControlLatency()
     return self._get_observation(), reward, done, info
 
