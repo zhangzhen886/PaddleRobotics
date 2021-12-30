@@ -51,27 +51,31 @@ PI = math.pi
 
 MAX_MOTOR_ANGLE_CHANGE_PER_STEP = 0.2
 _DEFAULT_HIP_POSITIONS = (
-    (0.17, -0.135, 0),
-    (0.17, 0.13, 0),
-    (-0.195, -0.135, 0),
-    (-0.195, 0.13, 0),
+    (0.2399, -0.051, 0),
+    (0.2399, 0.051, 0),
+    (-0.2399, -0.051, 0),
+    (-0.2399, 0.051, 0),
 )
+
+LENGTH_HIP_LINK = 0.083
+LENGTH_UPPER_LINK = 0.25
+LENGTH_LOWER_LINK = 0.25
 
 COM_OFFSET = -np.array([0.0, 0.0, 0.0])
 HIP_OFFSETS = np.array([[0.2399, -0.051, 0.0], [0.2399, 0.051, 0.0],
                         [-0.2399, -0.051, 0.0], [-0.2399, 0.051, 0.0]
                         ]) + COM_OFFSET
-BASE_FOOT = np.array([0.2399, -0.134, -0.28,
-                      0.2399, 0.134, -0.28,
-                      -0.2399, -0.134, -0.28,
-                      -0.2399, 0.134, -0.28])
+BASE_FOOT = np.array([0.2399, -0.134, -0.35,
+                      0.2399, 0.134, -0.35,
+                      -0.2899, -0.134, -0.35,
+                      -0.2899, 0.134, -0.35])
 
-ABDUCTION_P_GAIN = 80.0
-ABDUCTION_D_GAIN = 1.
-HIP_P_GAIN = 100.0
-HIP_D_GAIN = 2.0
-KNEE_P_GAIN = 100.0
-KNEE_D_GAIN = 2.0
+ABDUCTION_P_GAIN = 100.0
+ABDUCTION_D_GAIN = 2.
+HIP_P_GAIN = 120.0
+HIP_D_GAIN = 4.0
+KNEE_P_GAIN = 120.0
+KNEE_D_GAIN = 4.0
 
 # Bases on the readings from Laikago's default pose.
 INIT_MOTOR_ANGLES = np.array([0, 0.9, -1.8] * NUM_LEGS)
@@ -89,10 +93,11 @@ _LINK_A_FIELD_NUMBER = 3
 
 
 def foot_position_in_hip_frame_to_joint_angle(foot_position, l_hip_sign=1):
-  l_up = 0.2
-  l_low = 0.2
-  l_hip = 0.08505 * l_hip_sign
+  l_up = LENGTH_UPPER_LINK
+  l_low = LENGTH_LOWER_LINK
+  l_hip = LENGTH_HIP_LINK * l_hip_sign
   x, y, z = foot_position[0], foot_position[1], foot_position[2]
+  x += 0.008
   theta_knee = -np.arccos(
       (x**2 + y**2 + z**2 - l_hip**2 - l_low**2 - l_up**2) /
       (2 * l_low * l_up))
@@ -106,9 +111,9 @@ def foot_position_in_hip_frame_to_joint_angle(foot_position, l_hip_sign=1):
 
 def foot_position_in_hip_frame(angles, l_hip_sign=1):
   theta_ab, theta_hip, theta_knee = angles[0], angles[1], angles[2]
-  l_up = 0.2
-  l_low = 0.2
-  l_hip = 0.08505 * l_hip_sign
+  l_up = LENGTH_UPPER_LINK
+  l_low = LENGTH_LOWER_LINK
+  l_hip = LENGTH_HIP_LINK * l_hip_sign
   leg_distance = np.sqrt(l_up**2 + l_low**2 +
                          2 * l_up * l_low * np.cos(theta_knee))
   eff_swing = theta_hip + theta_knee / 2
@@ -123,6 +128,15 @@ def foot_position_in_hip_frame(angles, l_hip_sign=1):
   return np.array([off_x, off_y, off_z])
 
 
+def foot_positions_in_base_frame(foot_angles):
+  foot_angles = foot_angles.reshape((4, 3))
+  foot_positions = np.zeros((4, 3))
+  for i in range(4):
+    foot_positions[i] = foot_position_in_hip_frame(foot_angles[i],
+                                                   l_hip_sign=(-1)**(i + 1))
+  return foot_positions + HIP_OFFSETS
+
+
 def analytical_leg_jacobian(leg_angles, leg_id):
   """
   Computes the analytical Jacobian.
@@ -130,9 +144,9 @@ def analytical_leg_jacobian(leg_angles, leg_id):
   ` leg_angles: a list of 3 numbers for current abduction, hip and knee angle.
     l_hip_sign: whether it's a left (1) or right(-1) leg.
   """
-  l_up = 0.2
-  l_low = 0.2
-  l_hip = 0.08505 * (-1)**(leg_id + 1)
+  l_up = LENGTH_UPPER_LINK
+  l_low = LENGTH_LOWER_LINK
+  l_hip = LENGTH_HIP_LINK * (-1)**(leg_id + 1)
 
   t1, t2, t3 = leg_angles[0], leg_angles[1], leg_angles[2]
   l_eff = np.sqrt(l_up**2 + l_low**2 + 2 * l_up * l_low * np.cos(t3))
@@ -156,15 +170,6 @@ def analytical_leg_jacobian(leg_angles, leg_id):
 # For JIT compilation
 foot_position_in_hip_frame_to_joint_angle(np.random.uniform(size=3), 1)
 foot_position_in_hip_frame_to_joint_angle(np.random.uniform(size=3), -1)
-
-
-def foot_positions_in_base_frame(foot_angles):
-  foot_angles = foot_angles.reshape((4, 3))
-  foot_positions = np.zeros((4, 3))
-  for i in range(4):
-    foot_positions[i] = foot_position_in_hip_frame(foot_angles[i],
-                                                   l_hip_sign=(-1)**(i + 1))
-  return foot_positions + HIP_OFFSETS
 
 
 class Aliengo(minitaur.Minitaur):
