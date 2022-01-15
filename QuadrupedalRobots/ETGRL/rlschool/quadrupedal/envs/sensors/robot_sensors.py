@@ -17,7 +17,7 @@ os.sys.path.insert(0, parentdir)
 import numpy as np
 import typing
 
-from robots import minitaur_pose_utils
+from rlschool.quadrupedal.robots import minitaur_pose_utils
 from rlschool.quadrupedal.envs.sensors import sensor
 
 _ARRAY = typing.Iterable[float] #pylint: disable=invalid-name
@@ -115,6 +115,7 @@ class MotorAngleAccSensor(sensor.BoxSpaceSensor):
     self.normal = normal
     self.first_time = True
     self.noise = noise
+    # self._mean = np.array([0,0.9,-1.8]*4+[0]*12)
     self._mean = np.array([0,0.9,-1.8]*4+[0]*12)
     self._std = np.array([0.1]*12+[1]*12)
     self.dt = dt
@@ -143,7 +144,7 @@ class MotorAngleAccSensor(sensor.BoxSpaceSensor):
       self.first_time = False
     else:
       motor_acc = (motor_angles - self.last_angle)/self.dt
-      motor_acc1 = np.asarray(self._robot.GetMotorVelocities())
+      # motor_acc = np.asarray(self._robot.GetMotorVelocities())
     if self.noise:
       motor_angles += np.random.normal(0,1e-2,size=self._num_motors)
       motor_acc += np.random.normal(0,0.5,size=self._num_motors)

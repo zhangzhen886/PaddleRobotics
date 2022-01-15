@@ -24,19 +24,12 @@ from rlschool.quadrupedal.envs import locomotion_gym_config
 
 NUM_MOTORS = 12
 NUM_LEGS = 4
+DOFS_PER_LEG = 3
 MOTOR_NAMES = [
-    "FR_hip_joint",
-    "FR_upper_joint",
-    "FR_lower_joint",
-    "FL_hip_joint",
-    "FL_upper_joint",
-    "FL_lower_joint",
-    "RR_hip_joint",
-    "RR_upper_joint",
-    "RR_lower_joint",
-    "RL_hip_joint",
-    "RL_upper_joint",
-    "RL_lower_joint",
+  "FR_hip_joint", "FR_upper_joint", "FR_lower_joint",
+  "FL_hip_joint", "FL_upper_joint", "FL_lower_joint",
+  "RR_hip_joint", "RR_upper_joint", "RR_lower_joint",
+  "RL_hip_joint", "RL_upper_joint", "RL_lower_joint",
 ]
 INIT_RACK_POSITION = [0, 0, 1]
 INIT_POSITION = [0, 0, 0.26]
@@ -44,17 +37,17 @@ JOINT_DIRECTIONS = np.ones(12)
 HIP_JOINT_OFFSET = 0.0
 UPPER_LEG_JOINT_OFFSET = 0.0
 KNEE_JOINT_OFFSET = 0.0
-DOFS_PER_LEG = 3
 JOINT_OFFSETS = np.array(
     [HIP_JOINT_OFFSET, UPPER_LEG_JOINT_OFFSET, KNEE_JOINT_OFFSET] * 4)
-PI = math.pi
+# Bases on the readings from Laikago's default pose.
+INIT_MOTOR_ANGLES = np.array([0, 0.9, -1.8] * NUM_LEGS)
 
 MAX_MOTOR_ANGLE_CHANGE_PER_STEP = 0.2
 _DEFAULT_HIP_POSITIONS = (
-    (0.183, -0.047, 0),
-    (0.183, 0.047, 0),
-    (-0.183, -0.047, 0),
-    (-0.183, 0.047, 0),
+  (0.183, -0.047, 0),
+  (0.183, 0.047, 0),
+  (-0.183, -0.047, 0),
+  (-0.183, 0.047, 0),
 )
 
 # COM_OFFSET = -np.array([0.012731, 0.002186, 0.000515])
@@ -78,16 +71,13 @@ HIP_D_GAIN = 2.0
 KNEE_P_GAIN = 120.0
 KNEE_D_GAIN = 2.0
 
-# Bases on the readings from Laikago's default pose.
-INIT_MOTOR_ANGLES = np.array([0, 0.9, -1.8] * NUM_LEGS)
-
 HIP_NAME_PATTERN = re.compile(r"\w+_hip_\w+")
 UPPER_NAME_PATTERN = re.compile(r"\w+_upper_\w+")
 LOWER_NAME_PATTERN = re.compile(r"\w+_lower_\w+")
 TOE_NAME_PATTERN = re.compile(r"\w+_toe\d*")
 IMU_NAME_PATTERN = re.compile(r"imu\d*")
 
-URDF_FILENAME = "/home/zhenz/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/a1/a1.urdf"
+URDF_FILENAME = os.environ['HOME']+"/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/a1/a1.urdf"
 
 _BODY_B_FIELD_NUMBER = 2
 _LINK_A_FIELD_NUMBER = 3
@@ -240,6 +230,7 @@ class A1(minitaur.Minitaur):
     self._urdf_filename = urdf_filename
     self._allow_knee_contact = allow_knee_contact
     self._enable_clip_motor_commands = enable_clip_motor_commands
+    self.base_foot_position = BASE_FOOT
 
     motor_kp = [
         ABDUCTION_P_GAIN, HIP_P_GAIN, KNEE_P_GAIN, ABDUCTION_P_GAIN,

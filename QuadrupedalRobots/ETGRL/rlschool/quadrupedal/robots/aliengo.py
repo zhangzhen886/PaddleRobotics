@@ -24,37 +24,31 @@ from rlschool.quadrupedal.envs import locomotion_gym_config
 
 NUM_MOTORS = 12
 NUM_LEGS = 4
+DOFS_PER_LEG = 3
 MOTOR_NAMES = [
-    "FR_hip_joint",
-    "FR_thigh_joint",
-    "FR_calf_joint",
-    "FL_hip_joint",
-    "FL_thigh_joint",
-    "FL_calf_joint",
-    "RR_hip_joint",
-    "RR_thigh_joint",
-    "RR_calf_joint",
-    "RL_hip_joint",
-    "RL_thigh_joint",
-    "RL_calf_joint",
+  "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+  "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+  "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+  "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
 ]
 INIT_RACK_POSITION = [0, 0, 1]
-INIT_POSITION = [0, 0, 0.35]
+INIT_POSITION = [0, 0, 0.37]
 JOINT_DIRECTIONS = np.ones(12)
 HIP_JOINT_OFFSET = 0.0
 UPPER_LEG_JOINT_OFFSET = 0.0
 KNEE_JOINT_OFFSET = 0.0
-DOFS_PER_LEG = 3
 JOINT_OFFSETS = np.array(
     [HIP_JOINT_OFFSET, UPPER_LEG_JOINT_OFFSET, KNEE_JOINT_OFFSET] * 4)
-PI = math.pi
+# Bases on the readings from Laikago's default pose.
+# INIT_MOTOR_ANGLES = np.array([0, 0.9, -1.8] * NUM_LEGS)
+INIT_MOTOR_ANGLES = np.array([0, 0.77, -1.59] * NUM_LEGS)
 
 MAX_MOTOR_ANGLE_CHANGE_PER_STEP = 0.2
-_DEFAULT_HIP_POSITIONS = (
-    (0.2399, -0.051, 0),
-    (0.2399, 0.051, 0),
-    (-0.2399, -0.051, 0),
-    (-0.2399, 0.051, 0),
+DEFAULT_HIP_POSITIONS = (
+  (0.2399, -0.051, 0),
+  (0.2399, 0.051, 0),
+  (-0.2399, -0.051, 0),
+  (-0.2399, 0.051, 0),
 )
 
 LENGTH_HIP_LINK = 0.083
@@ -67,18 +61,15 @@ HIP_OFFSETS = np.array([[0.2399, -0.051, 0.0], [0.2399, 0.051, 0.0],
                         ]) + COM_OFFSET
 BASE_FOOT = np.array([0.2399, -0.134, -0.35,
                       0.2399, 0.134, -0.35,
-                      -0.2899, -0.134, -0.35,
-                      -0.2899, 0.134, -0.35])
+                      -0.2399, -0.134, -0.35,
+                      -0.2399, 0.134, -0.35])
 
 ABDUCTION_P_GAIN = 100.0
 ABDUCTION_D_GAIN = 2.
-HIP_P_GAIN = 120.0
+HIP_P_GAIN = 150.0
 HIP_D_GAIN = 4.0
-KNEE_P_GAIN = 120.0
+KNEE_P_GAIN = 150.0
 KNEE_D_GAIN = 4.0
-
-# Bases on the readings from Laikago's default pose.
-INIT_MOTOR_ANGLES = np.array([0, 0.9, -1.8] * NUM_LEGS)
 
 HIP_NAME_PATTERN = re.compile(r"\w+_hip_\w+")
 UPPER_NAME_PATTERN = re.compile(r"\w+_thigh_\w+")
@@ -86,7 +77,7 @@ LOWER_NAME_PATTERN = re.compile(r"\w+_calf_\w+")
 TOE_NAME_PATTERN = re.compile(r"\w+_foot\d*")
 IMU_NAME_PATTERN = re.compile(r"imu\d*")
 
-URDF_FILENAME = "/home/zhenz/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/aliengo/aliengo.urdf"
+URDF_FILENAME = os.environ['HOME']+"/workspaces/PaddleRobotics/QuadrupedalRobots/ETGRL/aliengo/aliengo.urdf"
 
 _BODY_B_FIELD_NUMBER = 2
 _LINK_A_FIELD_NUMBER = 3
@@ -298,7 +289,7 @@ class Aliengo(minitaur.Minitaur):
             motor_control_mode=robot_config.MotorControlMode.POSITION)
 
   def GetHipPositionsInBaseFrame(self):
-    return _DEFAULT_HIP_POSITIONS
+    return DEFAULT_HIP_POSITIONS
 
   def GetFootContacts(self):
     all_contacts = self._pybullet_client.getContactPoints(bodyA=self.quadruped)
@@ -409,6 +400,32 @@ class Aliengo(minitaur.Minitaur):
       self._leg_masses_urdf.append(
         self._pybullet_client.getDynamicsInfo(self.quadruped, foot_id)[0])
     self._robot_mass = np.sum(self._base_mass_urdf) + np.sum(self._leg_masses_urdf)
+
+  def _RecordInertiaInfoFromURDF(self):
+    """Record the inertia of each body from URDF file."""
+    self._link_urdf = []
+    num_bodies = self._pybullet_client.getNumJoints(self.quadruped)
+    for body_id in range(-1, num_bodies):  # -1 is for the base link.
+      inertia = self._pybullet_client.getDynamicsInfo(self.quadruped,
+                                                      body_id)[2]
+      self._link_urdf.append(inertia)
+    # We need to use id+1 to index self._link_urdf because it has the base
+    # (index = -1) at the first element.
+    self._base_inertia_urdf = [
+        self._link_urdf[chassis_id + 1] for chassis_id in self._chassis_link_ids
+    ]
+    self._leg_inertia_urdf = [
+        self._link_urdf[leg_id + 1] for leg_id in self._hip_link_ids
+    ]
+    self._leg_inertia_urdf.extend(
+        [self._link_urdf[leg_id + 1] for leg_id in self._thigh_link_ids]
+    )
+    self._leg_inertia_urdf.extend(
+      [self._link_urdf[leg_id + 1] for leg_id in self._calf_link_ids]
+    )
+    self._leg_inertia_urdf.extend(
+      [self._link_urdf[leg_id + 1] for leg_id in self._foot_link_ids]
+    )
 
   def _BuildUrdfIds(self):
     """Build the link Ids from its name in the URDF file.

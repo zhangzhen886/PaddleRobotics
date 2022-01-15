@@ -73,6 +73,7 @@ class TrajectoryGeneratorWrapperEnv(object):
       raise ValueError('Action cannot be None')
 
     # new_action = input_action(NN_act+ETG_act) + init_joint_pose(0.0,0.9,-1.8)
+    # ETG_act -= INIT_act
     new_action = self._trajectory_generator.get_action(
         self._gym_env.robot.GetTimeSinceReset(), action)
     # Step forward the simulation, given the action.

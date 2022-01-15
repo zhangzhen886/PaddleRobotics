@@ -5,8 +5,6 @@ Param_Dict = {'stand': 0, 'torso': 0, 'up': 0, 'feet': 0, 'contact': 0, 'walk': 
               'slip' : 0, 'velx': 0, 'foot': 0, 'tau': 0, 'vely': 0, 'height': 0, 'footsym': 0, 'footpos': 0, 'act': 0,
               'joint': 0, 'gaitref': 0, 'done': 1}
 ACTION_DIM = 12
-base_foot = np.array([0.18, -0.15, -0.23, 0.18, 0.148, -0.23, \
-                      -0.18, -0.14, -0.23, -0.18, 0.135, -0.23])
 
 
 class ETG_layer():
@@ -118,7 +116,7 @@ class ETG_model():
       new_act[9:] = act1.copy()
     return new_act
 
-  def act_clip(self, new_act, env):
+  def act_clip(self, new_act, robot):
     if self.act_mode == "pose":
       # joint control mode
       act = np.tanh(new_act) * np.array([0.1, 0.7, 0.7] * 4)
@@ -128,7 +126,8 @@ class ETG_model():
       for i in range(4):
         delta = new_act[i * 3:(i + 1) * 3].copy()
         while (1):
-          index, angle = env.ComputeMotorAnglesFromFootLocalPosition(i, delta + self.base_foot[i * 3:(i + 1) * 3])
+          index, angle = robot.ComputeMotorAnglesFromFootLocalPosition(
+            i, delta + robot.base_foot_position[i * 3:(i + 1) * 3])
           if np.sum(np.isnan(angle)) == 0:
             break
           delta *= 0.95
