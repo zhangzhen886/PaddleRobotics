@@ -5,13 +5,20 @@
 import gym
 
 from rlschool.quadrupedal.envs import env_builder
-from rlschool.quadrupedal.robots import a1
-from rlschool.quadrupedal.robots import robot_config
+from rlschool.quadrupedal.robots import robot_config, a1, aliengo
 from rlschool.quadrupedal.envs.env_wrappers.MonitorEnv import EnvWrapper, Param_Dict, Random_Param_Dict
 from copy import copy
 
-SENSOR_MODE = {"dis": 1, "motor": 1, "imu": 1, "contact": 1, "footpose": 0, "ETG": 0}
-
+SENSOR_MODE = {
+  "dis": 0,  # 3
+  "motor": 1,  # 12+12=24
+  "imu": 1,  # 6
+  "contact": 1,  # 4
+  "footpose": 1,  # 4*3=12
+  "basepos": 1,  # 3
+  "ETG": 1,  # 12
+  "ETG_obs": 0,  # 20
+}
 
 class A1GymEnv(gym.Env):
   """A1 environment that supports the gym interface."""
@@ -44,7 +51,8 @@ class A1GymEnv(gym.Env):
                action_repeat=13,
                **kwargs):
     self._env = env_builder.build_regular_env(
-      a1.A1,
+      # a1.A1,
+      aliengo.Aliengo,
       motor_control_mode=motor_control_mode,
       gait=gait,
       normal=normal,

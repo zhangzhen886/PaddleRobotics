@@ -16,12 +16,9 @@ from rlschool.quadrupedal.envs.env_wrappers import trajectory_generator_wrapper_
 from rlschool.quadrupedal.envs.env_wrappers import simple_openloop
 from rlschool.quadrupedal.envs.env_wrappers import simple_forward_task
 from rlschool.quadrupedal.envs.sensors import robot_sensors
-from rlschool.quadrupedal.robots import a1
-from rlschool.quadrupedal.robots import robot_config
+from rlschool.quadrupedal.robots import robot_config, a1, aliengo
 from rlschool.quadrupedal.envs.env_wrappers.gait_generator_env import GaitGeneratorWrapperEnv
 
-
-SENSOR_MODE = {"dis":1,"motor":1,"imu":1,"contact":1,"footpose":0,"ETG":0}
 
 # call in A1GymEnv.init()
 def build_regular_env(robot_class,  # a1.A1
@@ -61,24 +58,24 @@ def build_regular_env(robot_class,  # a1.A1
   sensors = []
   noise = True if ("noise" in sensor_mode and sensor_mode["noise"]) else False
   dt = sim_params.num_action_repeat * sim_params.sim_time_step_s  # 13 * 0.002 = 0.026
-  # print(sensor_mode)
-  if sensor_mode["dis"]:
+  if sensor_mode["dis"]:  # 3
     sensors.append(robot_sensors.BaseDisplacementSensor(convert_to_local_frame=True,normal=normal,noise=noise,dt=dt))
-  if sensor_mode["imu"]==1:
+  if sensor_mode["imu"]==1:  # 6
     sensors.append(robot_sensors.IMUSensor(channels=["R", "P", "Y","dR", "dP", "dY"],normal=normal,noise=noise))
-  elif sensor_mode["imu"]==2:
+  elif sensor_mode["imu"]==2:  # 3
     sensors.append(robot_sensors.IMUSensor(channels=["dR", "dP", "dY"],noise=noise))
-  if sensor_mode["motor"]==1:
-    sensors.append(robot_sensors.MotorAngleAccSensor(num_motors=a1.NUM_MOTORS,normal=normal,noise=noise,dt=dt))
-  elif sensor_mode["motor"]==2:
-    sensors.append(robot_sensors.MotorAngleSensor(num_motors=a1.NUM_MOTORS,noise=noise))
-  if sensor_mode["contact"] == 1:
+  if sensor_mode["motor"]==1:  # 12+12=24
+    sensors.append(robot_sensors.MotorAngleAccSensor(num_motors=aliengo.NUM_MOTORS,normal=normal,noise=noise,dt=dt))
+  elif sensor_mode["motor"]==2:  # 12
+    sensors.append(robot_sensors.MotorAngleSensor(num_motors=aliengo.NUM_MOTORS,noise=noise))
+  if sensor_mode["contact"] == 1:  # 4
     sensors.append(robot_sensors.FootContactSensor())
-  elif sensor_mode["contact"] == 2:
+  elif sensor_mode["contact"] == 2:  # 8
     sensors.append(robot_sensors.SimpleFootForceSensor())
-  if sensor_mode["footpose"]:
-    sensors.append(robot_sensors.FootPoseSensor(normal=normal))
-  # print(sensors)
+  if sensor_mode["footpose"]:  # 4*3=12
+    sensors.append(robot_sensors.FootPoseSensor(normal=True))
+  if sensor_mode["basepos"]:  # 3
+    sensors.append(robot_sensors.BasePositionSensor())
 
   task = simple_forward_task.SimpleForwardTask(dynamic_param)
 
