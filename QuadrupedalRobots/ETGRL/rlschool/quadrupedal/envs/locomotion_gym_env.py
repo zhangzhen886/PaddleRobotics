@@ -55,7 +55,7 @@ class LocomotionGymEnv(gym.Env):
 
   def __init__(self,
                gym_config,
-               param,
+               param=None,
                robot_class=None,
                env_sensors=None,
                robot_sensors=None,
@@ -83,6 +83,7 @@ class LocomotionGymEnv(gym.Env):
     self.env_info = [[-100,100,np.array([1,0,0,0,0,0,0])]]
     self.add_height = 0
     self.robot_pos = [0.0, 0.0, 0.0]
+    self.dynamic_param = {}
     self.seed()
     self.stepheight = 0.05
     self.stepwidth = 0.33
@@ -90,8 +91,8 @@ class LocomotionGymEnv(gym.Env):
     self._gym_config = gym_config
     self._robot_class = robot_class
     self._robot_sensors = robot_sensors
-    self.param = param
-    self.random = random
+    self._param = param
+    self._random = random
     self._env_sensors = env_sensors if env_sensors is not None else list()
     if self._robot_class is None:
       raise ValueError('robot_class cannot be None.')
@@ -152,7 +153,7 @@ class LocomotionGymEnv(gym.Env):
     self._camera_pitch = gym_config.simulation_parameters.camera_pitch
     self._render_width = gym_config.simulation_parameters.render_width
     self._render_height = gym_config.simulation_parameters.render_height
-    self.first_reset = True
+    self._first_reset = True
     self._hard_reset = True
     self.reset()
 
@@ -165,7 +166,7 @@ class LocomotionGymEnv(gym.Env):
     self.observation_space = (
         space_utils.convert_sensors_to_gym_space_dictionary(
             self.all_sensors()))
-    # self.hf = HeightField(2)
+    self.hf = HeightField(2)
     # if self.height_field:
     #     # Do 3x for extra roughness
     #     for i in range(height_field_iters):
@@ -236,21 +237,22 @@ class LocomotionGymEnv(gym.Env):
     Returns:
       A numpy array contains the initial observation after reset.
     """
+    self.robot_pos = [0.0, 0.0, 0.0]
     for sensor in self._robot_sensors:
       sensor.reset()
     if self._is_render:
       self._pybullet_client.configureDebugVisualizer(
           self._pybullet_client.COV_ENABLE_RENDERING, 0)
-    Reset = False
+    hard_set = False
     if "hardset" in kwargs.keys():
       if kwargs["hardset"]:
         # self._hard_reset = True
-        Reset = True
+        hard_set = True
     # print("hardset:",self._hard_reset)
     # print("kwargs:",kwargs)
     # t0 = time.clock()
     # Clear the simulation world and rebuild the robot interface.
-    if self._hard_reset or Reset:
+    if self._first_reset or self._hard_reset or hard_set:
       self._pybullet_client.resetSimulation()
       self._pybullet_client.setPhysicsEngineParameter(
           numSolverIterations=self._num_bullet_solver_iterations)
@@ -271,22 +273,22 @@ class LocomotionGymEnv(gym.Env):
           hf_terrain = self.hf_terrain_mode
         if hf_terrain == "rough":
           self.parametric_heightfield = ht.RandomUniformTerrain(self._pybullet_client, size=10)
-          self.add_height = 0.05
           robot_x, robot_y = -3.5, 0.0
           x_range, y_range = (-0.3, 0.3), (-0.1, 0.1)
           x_range = np.array(x_range) + robot_x
           y_range = np.array(y_range) + robot_y
-          self.robot_pos = [robot_x, robot_y, 0.27 + self.parametric_heightfield.getMaxHeightInRange(x_range, y_range)[2]]
+          self.robot_pos = [robot_x, robot_y, self.parametric_heightfield.getMaxHeightInRange(x_range, y_range)[2]]
         elif hf_terrain == "slope":
           self.parametric_heightfield = ht.SlopeTerrain(self._pybullet_client, size=10)
-          self.add_height = 0.0
           robot_x, robot_y = -3.5, 0.0
-          self.robot_pos = [robot_x, robot_y, 0.28 + self.add_height]
+          x_range, y_range = (-0.3, 0.3), (-0.1, 0.1)
+          x_range = np.array(x_range) + robot_x
+          y_range = np.array(y_range) + robot_y
+          self.robot_pos = [robot_x, robot_y, self.parametric_heightfield.getMaxHeightInRange(x_range, y_range)[2]]
         else:
           self.parametric_heightfield = ht.PlainTerrain(self._pybullet_client)
-          self.add_height = 0.0
-          robot_x, robot_y = -3.5, 0.0
-          self.robot_pos = [robot_x, robot_y, 0.28 + self.add_height]
+          robot_x, robot_y = 0.0, 0.0
+          self.robot_pos = [robot_x, robot_y, 0.0]
       else:
         ground = self._pybullet_client.loadURDF("plane_implicit.urdf")
         self._pybullet_client.changeDynamics(ground, -1, lateralFriction=5)
@@ -317,37 +319,9 @@ class LocomotionGymEnv(gym.Env):
           enable_action_interpolation,
         allow_knee_contact=self._gym_config.simulation_parameters.
           allow_knee_contact)
-      # if "stepheight" in kwargs.keys():
-      # upstair_terrain(stepwidth=0.33,stepheight=0.05,mode="var")
 
-    # if self.height_field:
-    #   self.hf = HeightField(1)
-    #   self.hf.UpdateHeightField()
-    # Reset the pose of the robot.
-    # self._robot.Reset(reload_urdf=False,
-    #                   default_motor_angles=initial_motor_angles,
-    #                   reset_time=reset_duration,
-    #                   default_pose = [0,0,0.26+self.stepnum*self.stepheight])
-    # self._robot.Reset(reload_urdf=False,
-    #                   default_motor_angles=initial_motor_angles,
-    #                   reset_time=reset_duration,
-    #                   default_pose = [0,0,0.3+np.sin(0.1)*(100-1)])
-    # print("kwargs",kwargs)
-    # print("t:",time.clock()-t0)
-    if "hardset" in kwargs.keys():
-      if kwargs["hardset"]:
-        if "mode" in kwargs.keys() and kwargs["mode"] in terrain_modes:
-          self.add_height,self.env_info = generate_terrain(stepwidth=kwargs["stepwidth"], stepheight=kwargs["stepheight"],
-                                                           slope=kwargs["slope"],
-                                                           mode=kwargs["mode"], env_vecs=kwargs["env_vec"])
-        # else:
-        #   if self.task_mode == "stairslope":
-        #     print("ok!")
-        #     self.add_height,self.env_info = upstair_terrain(mode="special",env_vecs=upstair_downslope)
-        #   else:
-        #     print("okk!")
-        #     print(self.task_mode)
-    if self.first_reset:
+    # Using default special terrain
+    if self._first_reset:
       if self.task_mode == "stairslope":
         self.add_height,self.env_info = generate_terrain(mode="special", env_vecs=upstair_downslope)
       elif self.task_mode == "stairstair":
@@ -368,105 +342,37 @@ class LocomotionGymEnv(gym.Env):
       random_env = random_terrain_dict[rd.randint(1, 4)]
       self.add_height, self.env_info = generate_terrain(mode="special", env_vecs=random_env)
 
-    initial_motor_angles = None
+    # Set dynamic params of the robot and simulator.
+    self.dynamic_param = self.get_dynamic_param()
+    # if "dynamic_param" in kwargs.keys():
+    #   self.set_dynamic_param(kwargs["dynamic_param"], self._random)
+    # elif self._param is not None:
+    #   self.set_dynamic_param(self._param, self._random)
+
+    # Reset the pose of the robot.
     reset_duration = 0.0
-    reset_visualization_camera = True
     yaw = 0.0
     add_x = 0.0
     if "yaw" in kwargs.keys():
       yaw = kwargs["yaw"]
     if "x_noise" in kwargs.keys() and kwargs["x_noise"]:
-      add_x = np.random.uniform(-0.2,0.1)
+      add_x = np.random.uniform(-0.2, 0.1)
+    self.robot_pos += np.array([add_x, 0.0, 0.0])
+    self.robot_pos += np.array(self._robot.GetDefaultInitPosition())
+    self.robot_pos = self.robot_pos.tolist()
     self._robot.Reset(reload_urdf=False,
-                      default_motor_angles=initial_motor_angles,
                       reset_time=reset_duration,
                       default_pose=self.robot_pos,
                       yaw=yaw)
 
-    control_latency = 0.002
-    footfriction = 1.0
-    basemass = self._robot.GetBaseMassesFromURDF()[0]
-    baseinertia = self._robot.GetBaseInertiasFromURDF()[0]
-    legmass = self._robot.GetLegMassesFromURDF()
-    leginertia = self._robot.GetLegInertiasFromURDF()
-    motor_kp = np.zeros(12)
-    motor_kd = np.zeros(12)
-    gravity = np.array([0,0,-10])
-    # joint_friction_vec = np.zeros(12)
-    # spin_friction = 0
-    if not self.random:
-      if "dynamic_param" in kwargs.keys():
-        dynamic_param = kwargs["dynamic_param"]
-      else:
-        dynamic_param = copy.deepcopy(self.param)
-        # print(dynamic_param)
-      if 'control_latency' in dynamic_param.keys():
-        control_latency = 0.001 * dynamic_param['control_latency']
-      if 'footfriction' in dynamic_param.keys():
-        footfriction = dynamic_param['footfriction']
-      if 'basemass' in dynamic_param.keys():
-        basemass = [basemass * dynamic_param['basemass']]
-      if 'baseinertia' in dynamic_param.keys():
-        baseinertia_ratio = dynamic_param['baseinertia']
-        baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
-                        baseinertia[1] * baseinertia_ratio[1],
-                        baseinertia[2] * baseinertia_ratio[2])]
-      if 'legmass' in dynamic_param.keys():
-        legmass_ratio = dynamic_param['legmass']
-        legmass = legmass * np.array([legmass_ratio[0],legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*5)
-      if 'leginertia' in dynamic_param.keys():
-        leginertia_ratio = dynamic_param['leginertia']
-        leginertia_new = []
-        for i in range(12):
-          leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
-                                 leginertia_ratio[i] * leginertia[i][1],
-                                 leginertia_ratio[i] * leginertia[i][2]))
-        leginertia = copy.deepcopy(leginertia_new)
-      if 'motor_kp' in dynamic_param.keys() and 'motor_kd' in dynamic_param.keys():
-        motor_kp = dynamic_param['motor_kp']
-        motor_kd = dynamic_param['motor_kd']
-      if 'gravity' in dynamic_param.keys():
-        gravity = dynamic_param['gravity']
-    else:
-      control_latency = np.random.uniform(0.035, 0.045)
-      footfriction = np.random.uniform(1, 2)
-      basemass_ratio = np.random.uniform(0.8, 1.2)
-      basemass = [basemass * basemass_ratio]
-      baseinertia_ratio = np.random.uniform([0.3, 1.3, 0.5], [0.7, 1.7, 1.5], 3)
-      baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
-                      baseinertia[1] * baseinertia_ratio[1],
-                      baseinertia[2] * baseinertia_ratio[2])]
-      legmass_ratio = np.random.uniform([1, 1.1, 0.8], [1.4, 1.5, 1.6], 3)
-      legmass = legmass * np.array([legmass_ratio[0], legmass_ratio[1], legmass_ratio[2]] * 4)
-      leginertia_ratio = np.random.uniform([0.8, 0.55, 0.69, 1.4, 1.33, 0.5, 1.37, 0.48, 1.06, 1.39, 1.4, 1.4],
-                                           [1.4, 0.75, 0.99, 1.6, 1.53, 0.8, 1.57, 0.68, 1.46, 1.59, 1.6, 1.6], 12)
-      leginertia_new = []
-      for i in range(12):
-        leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
-                               leginertia_ratio[i] * leginertia[i][1],
-                               leginertia_ratio[i] * leginertia[i][2]))
-      leginertia = copy.deepcopy(leginertia_new)
-      motor_kp = np.random.uniform([83, 89, 83, 65, 100, 73, 68, 78, 76, 67, 74, 66],
-                                   [109, 109, 109, 109, 106, 97, 90, 80, 100, 99, 80, 109], 12)
-      motor_kd = np.random.normal([1.1, 2.9, 2.15, 1.8, 3.19, 1.8, 1.1, 3.99, 1.7, 1.2, 3.99, 2.7],
-                                  [1.9, 3.1, 2.85, 2.0, 3.21, 2.2, 1.9, 4.01, 2.1, 2.0, 4.01, 3.9], 12)
-      gravity = np.random.uniform([-1, -1, 8], [1, 1, 12], size=3)
-
-    # self._robot.SetControlLatency(control_latency)
-    # self._robot.SetFootFriction(footfriction)
-    # self._robot.SetBaseMasses(basemass)
-    # self._robot.SetBaseInertias(baseinertia)
-    # self._robot.SetLegMasses(legmass)
-    # self._robot.SetLegInertias(leginertia)
-    # self._robot.SetMotorGains(motor_kp, motor_kd)
-    # self._pybullet_client.setGravity(gravity[0], gravity[1], gravity[2])
-    self._pybullet_client.setPhysicsEngineParameter(enableConeFriction=0)
-    self._env_step_counter = 0
+    reset_visualization_camera = True
     if reset_visualization_camera:
       self._pybullet_client.resetDebugVisualizerCamera(self._camera_dist,
                                                        self._camera_yaw,
                                                        self._camera_pitch,
                                                        [0, 0, 0])
+    self._env_step_counter = 0
+    self._first_reset = False
     self._last_action = np.zeros(self.action_space.shape)
 
     if self._is_render:
@@ -485,23 +391,25 @@ class LocomotionGymEnv(gym.Env):
 
     # if self.height_field and not self.first_reset:
     #   self.hf.UpdateHeightField(self)
-    self.first_reset = False
 
     info = {}
-    info["rot_quat"] = self._robot.GetBaseOrientation()
-    info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
-    info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
-    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
+    info["env_info"] = self.env_info
+    info["rot_quat"] = self._robot.GetTrueBaseOrientation()
+    info["rot_mat"] = pybullet.getMatrixFromQuaternion(info["rot_quat"])
+    info["rot_euler"] = self._robot.GetTrueBaseRollPitchYaw()
+    info["drpy"] = self._robot.GetTrueBaseRollPitchYawRate()
     info["base_position"] = self._robot.GetBasePosition()
+    info["base_velocity"] = self._robot.GetBaseVelocity()
     info["foot_position"] = self._robot.GetFootPositionsInBaseFrame()
     info["real_contact"] = self._robot.GetFootContacts()
-    info["joint_angle"] = self._robot.GetMotorAngles()
-    info["env_info"] = self.env_info
+    info["joint_angle"] = self._robot.GetTrueMotorAngles()
+    info["joint_torque"] = self._robot.GetTrueMotorTorques()
     info["energy"] = self._robot.GetEnergyConsumptionPerControlStep()
+    info["transport_cost"] = self._robot.GetCostOfTransport()
     info["latency"] = self._robot.GetControlLatency()
-    info["footfriction"] = footfriction
-    info["basemass"] = basemass
     info["yaw_init"] = yaw
+    info['dynamics'] = np.array(
+      [self.dynamic_param['control_latency'], self.dynamic_param["footfriction"], self.dynamic_param['basemass']])
 
     return self._get_observation(),info
 
@@ -526,7 +434,7 @@ class LocomotionGymEnv(gym.Env):
     """
     self._last_base_position = self._robot.GetBasePosition()
     self._last_action = action
-    if self.random:
+    if self._random:
       control_latency = np.random.uniform(0.01,0.02)
       self._robot.SetControlLatency(control_latency)
       # print("latency:",control_latency)
@@ -583,16 +491,18 @@ class LocomotionGymEnv(gym.Env):
       self._robot.Terminate()
     
     info = {}
-    info["rot_quat"] = self._robot.GetBaseOrientation()
-    info["rot_mat"] = self._pybullet_client.getMatrixFromQuaternion(info["rot_quat"])
-    info["rot_euler"] = self._robot.GetBaseRollPitchYaw()
-    info["drpy"] = self._robot.GetBaseRollPitchYawRate()
+    info["env_info"] = self.env_info
+    info["rot_quat"] = self._robot.GetTrueBaseOrientation()
+    info["rot_mat"] = pybullet.getMatrixFromQuaternion(info["rot_quat"])
+    info["rot_euler"] = self._robot.GetTrueBaseRollPitchYaw()
+    info["drpy"] = self._robot.GetTrueBaseRollPitchYawRate()
     info["base_position"] = self._robot.GetBasePosition()
+    info["base_velocity"] = self._robot.GetBaseVelocity()
     info["foot_position"] = self._robot.GetFootPositionsInBaseFrame()
     info["foot_position_world"] = self._robot.GetFootPositionsInWorldFrame()
     info["real_contact"] = self._robot.GetFootContacts()
-    info["joint_angle"] = self._robot.GetMotorAngles()
-    info["env_info"] = self.env_info  # [lastx, basex, env_vec] in "upstair_terrain"
+    info["joint_angle"] = self._robot.GetTrueMotorAngles()
+    info["joint_torque"] = self._robot.GetTrueMotorTorques()
     info["energy"] = self._robot.GetEnergyConsumptionPerControlStep()
     info["transport_cost"] = self._robot.GetCostOfTransport()
     info["latency"] = self._robot.GetControlLatency()
@@ -645,6 +555,111 @@ class LocomotionGymEnv(gym.Env):
   def set_ground(self, ground_id):
     """Set simulation ground model."""
     self._world_dict['ground'] = ground_id
+
+  def get_dynamic_param(self):
+    if not self.dynamic_param:
+      control_latency = 0.002
+      footfriction = 1.0
+      motor_kp = np.zeros(12)
+      motor_kd = np.zeros(12)
+      gravity = np.array([0, 0, -10])
+      basemass = self._robot.GetBaseMassesFromURDF()[0]
+      baseinertia = self._robot.GetBaseInertiasFromURDF()[0]
+      legmass = self._robot.GetLegMassesFromURDF()
+      leginertia = self._robot.GetLegInertiasFromURDF()
+      self.dynamic_param['control_latency'] = control_latency
+      self.dynamic_param['footfriction'] = footfriction
+      self.dynamic_param['motor_kp'] = motor_kp
+      self.dynamic_param['motor_kd'] = motor_kd
+      self.dynamic_param['gravity'] = gravity
+      self.dynamic_param['basemass'] = basemass
+      self.dynamic_param['baseinertia'] = baseinertia
+      self.dynamic_param['legmass'] = legmass
+      self.dynamic_param['leginertia'] = leginertia
+    return self.dynamic_param
+
+  def set_dynamic_param(self, dynamic_param, random):
+    control_latency = 0.002
+    footfriction = 1.0
+    motor_kp = np.zeros(12)
+    motor_kd = np.zeros(12)
+    gravity = np.array([0, 0, -10])
+    basemass = self._robot.GetBaseMassesFromURDF()[0]
+    baseinertia = self._robot.GetBaseInertiasFromURDF()[0]
+    legmass = self._robot.GetLegMassesFromURDF()
+    leginertia = self._robot.GetLegInertiasFromURDF()
+    if random is not True:
+      if 'control_latency' in dynamic_param.keys():
+        control_latency = 0.001 * dynamic_param['control_latency']
+      if 'footfriction' in dynamic_param.keys():
+        footfriction = dynamic_param['footfriction']
+      if 'motor_kp' in dynamic_param.keys() and 'motor_kd' in dynamic_param.keys():
+        motor_kp = dynamic_param['motor_kp']
+        motor_kd = dynamic_param['motor_kd']
+      if 'gravity' in dynamic_param.keys():
+        gravity = dynamic_param['gravity']
+      if 'basemass' in dynamic_param.keys():
+        basemass = [basemass * dynamic_param['basemass']]
+      if 'baseinertia' in dynamic_param.keys():
+        baseinertia_ratio = dynamic_param['baseinertia']
+        baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
+                        baseinertia[1] * baseinertia_ratio[1],
+                        baseinertia[2] * baseinertia_ratio[2])]
+      if 'legmass' in dynamic_param.keys():
+        legmass_ratio = dynamic_param['legmass']
+        legmass = legmass * np.array([legmass_ratio[0],legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*5)
+      if 'leginertia' in dynamic_param.keys():
+        leginertia_ratio = dynamic_param['leginertia']
+        leginertia_new = []
+        for i in range(12):
+          leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
+                                 leginertia_ratio[i] * leginertia[i][1],
+                                 leginertia_ratio[i] * leginertia[i][2]))
+        leginertia = copy.deepcopy(leginertia_new)
+    else:
+      control_latency = np.random.uniform(0.035, 0.045)
+      footfriction = np.random.uniform(1, 2)
+      motor_kp = np.random.uniform([83, 89, 83, 65, 100, 73, 68, 78, 76, 67, 74, 66],
+                                   [109, 109, 109, 109, 106, 97, 90, 80, 100, 99, 80, 109], 12)
+      motor_kd = np.random.normal([1.1, 2.9, 2.15, 1.8, 3.19, 1.8, 1.1, 3.99, 1.7, 1.2, 3.99, 2.7],
+                                  [1.9, 3.1, 2.85, 2.0, 3.21, 2.2, 1.9, 4.01, 2.1, 2.0, 4.01, 3.9], 12)
+      gravity = np.random.uniform([-1, -1, 8], [1, 1, 12], size=3)
+      basemass_ratio = np.random.uniform(0.8, 1.2)
+      basemass = [basemass * basemass_ratio]
+      baseinertia_ratio = np.random.uniform([0.3, 1.3, 0.5], [0.7, 1.7, 1.5], 3)
+      baseinertia = [(baseinertia[0] * baseinertia_ratio[0],
+                      baseinertia[1] * baseinertia_ratio[1],
+                      baseinertia[2] * baseinertia_ratio[2])]
+      legmass_ratio = np.random.uniform([1, 1.1, 0.8], [1.4, 1.5, 1.6], 3)
+      legmass = legmass * np.array([legmass_ratio[0], legmass_ratio[1], legmass_ratio[2]] * 4)
+      leginertia_ratio = np.random.uniform([0.8, 0.55, 0.69, 1.4, 1.33, 0.5, 1.37, 0.48, 1.06, 1.39, 1.4, 1.4],
+                                           [1.4, 0.75, 0.99, 1.6, 1.53, 0.8, 1.57, 0.68, 1.46, 1.59, 1.6, 1.6], 12)
+      leginertia_new = []
+      for i in range(12):
+        leginertia_new.append((leginertia_ratio[i] * leginertia[i][0],
+                               leginertia_ratio[i] * leginertia[i][1],
+                               leginertia_ratio[i] * leginertia[i][2]))
+      leginertia = copy.deepcopy(leginertia_new)
+
+    self._robot.SetControlLatency(control_latency)
+    self._robot.SetFootFriction(footfriction)
+    self._robot.SetBaseMasses(basemass)
+    self._robot.SetBaseInertias(baseinertia)
+    self._robot.SetLegMasses(legmass)
+    self._robot.SetLegInertias(leginertia)
+    self._robot.SetMotorGains(motor_kp, motor_kd)
+    self._pybullet_client.setGravity(gravity[0], gravity[1], gravity[2])
+    self._pybullet_client.setPhysicsEngineParameter(enableConeFriction=0)
+
+    self.dynamic_param['control_latency'] = control_latency
+    self.dynamic_param['footfriction'] = footfriction
+    self.dynamic_param['motor_kp'] = motor_kp
+    self.dynamic_param['motor_kd'] = motor_kd
+    self.dynamic_param['gravity'] = gravity
+    self.dynamic_param['basemass'] = basemass
+    self.dynamic_param['baseinertia'] = baseinertia
+    self.dynamic_param['legmass'] = legmass
+    self.dynamic_param['leginertia'] = leginertia
 
   @property
   def rendering_enabled(self):
