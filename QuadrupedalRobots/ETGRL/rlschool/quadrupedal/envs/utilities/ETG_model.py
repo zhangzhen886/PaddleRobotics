@@ -127,7 +127,7 @@ class ETG_model():
         delta = new_act[i * 3:(i + 1) * 3].copy()
         while (1):
           index, angle = robot.ComputeMotorAnglesFromFootLocalPosition(
-            i, delta + robot.base_foot_position[i * 3:(i + 1) * 3])
+            i, delta + robot.GetDefaultBaseFootPosition()[i])
           if np.sum(np.isnan(angle)) == 0:
             break
           delta *= 0.95

@@ -23,12 +23,12 @@ from rlschool.quadrupedal.robots import robot_config, a1, aliengo
 
 
 SENSOR_MODE = {
+  "basepos": 1,  # 3
   "dis": 0,  # 3
   "motor": 1,  # 12+12=24
   "imu": 1,  # 6
   "contact": 1,  # 4
   "footpose": 1,  # 4*3=12
-  "basepos": 1,  # 3
   "ETG": 1,  # 12
   "ETG_obs": 0,  # 20
 }
@@ -87,7 +87,7 @@ def build_regular_env(robot_class,  # a1.A1
     sensors.append(robot_sensors.SimpleFootForceSensor())
   if sensor_mode["footpose"]:  # 4*3=12
     sensors.append(robot_sensors.FootPoseSensor(normal=False))
-  if sensor_mode["basepos"]:  # 3
+  if "basepos"in sensor_mode and sensor_mode["basepos"]:  # 3
     sensors.append(robot_sensors.BasePositionSensor())
 
   task = simple_forward_task.SimpleForwardTask(dynamic_param)

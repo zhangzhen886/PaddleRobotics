@@ -3,30 +3,33 @@ import gym
 import numpy as np
 import sys
 import pybullet
-from rlschool.quadrupedal.robots import robot_config
-from rlschool import quadrupedal
+from copy import copy
 from rlschool.quadrupedal.robots import action_filter
 from rlschool.quadrupedal.envs.utilities.ETG_model import ETG_layer, ETG_model
-from copy import copy
+
 
 Param_Dict = {
   'rew_torso'       : 0.0,
   'rew_up'          : 0.6,
+  'rew_height'      : 0.6,
   'rew_feet_vel'    : 0.0,
-  'rew_tau'         : 0.2,
+  'rew_tau'         : 1.0,
   'rew_done'        : 1,
   'rew_velx'        : 0,
   'rew_actionrate'  : 0.5,
-  'rew_badfoot'     : 0.1,
-  'rew_footcontact' : 0.1,
-  'rew_feet_airtime': 0.0,
+  'rew_badfoot'     : 1.0,
+  'rew_footcontact' : 1.0,
+  'rew_feet_airtime': 6.0,
   'rew_feet_pos'    : 4.0
 }
 Random_Param_Dict = {
   'random_dynamics': 0,
   'random_force'   : 0
 }
-
+Info_Dict = {
+  'velx',
+  'contact_nums',
+}
 
 # call in A1GymEnv.init(), behind "build_regular_env()"
 def EnvWrapper(env, reward_param, sensor_mode, normal=0, ETG_T=0.5, enable_action_filter=False,
@@ -36,10 +39,11 @@ def EnvWrapper(env, reward_param, sensor_mode, normal=0, ETG_T=0.5, enable_actio
   env = ETGWrapper(env=env, ETG=ETG, ETG_T=ETG_T, ETG_path=ETG_path,
                    ETG_T2=ETG_T2, ETG_H=ETG_H, act_mode=act_mode,
                    task_mode=task_mode, step_y=step_y)
-  env = ActionFilterWrapper(env=env, enable_action_filter=enable_action_filter)
-  env = RandomWrapper(env=env, random_param=random_param)
+  # env = ActionFilterWrapper(env=env, enable_action_filter=enable_action_filter)
+  # env = RandomWrapper(env=env, random_param=random_param)
   env = ObservationWrapper(env=env, ETG=ETG, sensor_mode=sensor_mode, normal=normal, ETG_H=ETG_H)
-  env = RewardShaping(env=env, reward_param=reward_param, reward_p=reward_p, vel_d=vel_d, vel_mode=vel_mode, foot_dx=foot_dx)
+  env = RewardShaping(env=env, reward_param=reward_param, reward_p=reward_p,
+                      vel_d=vel_d, vel_mode=vel_mode, foot_dx=foot_dx,)
   return env
 
 
@@ -47,7 +51,7 @@ class ActionFilterWrapper(gym.Wrapper):
   def __init__(self, env, enable_action_filter):
     gym.Wrapper.__init__(self, env)
     self.robot = self.env.robot
-    self.pybullet_client = self.env.pybullet_client
+    # self.pybullet_client = self.env.pybullet_client
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
     self.enable_action_filter = enable_action_filter and self.env.ETG.endswith("sac")
@@ -98,7 +102,7 @@ class ObservationWrapper(gym.Wrapper):
     gym.Wrapper.__init__(self, env)
     # print("env_time:",self.env.env_time_step)
     self.robot = self.env.robot
-    self.pybullet_client = self.env.pybullet_client
+    # self.pybullet_client = self.env.pybullet_client
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
     self.sensor_mode = sensor_mode
@@ -154,7 +158,6 @@ class ObservationWrapper(gym.Wrapper):
 
   def reset(self, **kwargs):
     obs, info = self.env.reset(**kwargs)
-    self.dynamic_info = info["dynamics"]
     if self.ETG:
       if "ETG" in self.sensor_mode.keys() and self.sensor_mode["ETG"]:
         ETG_out = info["ETG_act"]
@@ -171,7 +174,7 @@ class ObservationWrapper(gym.Wrapper):
       obs = np.concatenate((obs, force_vec), axis=0)
 
     if "dynamic_vec" in self.sensor_mode.keys() and self.sensor_mode["dynamic_vec"]:
-      dynamic_vec = self.dynamic_info
+      dynamic_vec = info["dynamics"]
       obs = np.concatenate((obs, dynamic_vec), axis=0)
 
     if "yaw" in self.sensor_mode.keys() and self.sensor_mode["yaw"]:
@@ -215,7 +218,7 @@ class ObservationWrapper(gym.Wrapper):
       obs = np.concatenate((obs, force_vec), axis=0)
 
     if "dynamic_vec" in self.sensor_mode.keys() and self.sensor_mode["dynamic_vec"]:
-      dynamic_vec = self.dynamic_info  # 3
+      dynamic_vec = info["dynamics"]  # 3
       obs = np.concatenate((obs, dynamic_vec), axis=0)
 
     if "yaw" in self.sensor_mode.keys() and self.sensor_mode["yaw"]:
@@ -245,7 +248,7 @@ class ETGWrapper(gym.Wrapper):
   def __init__(self, env, ETG, ETG_T, ETG_path, ETG_T2, ETG_H=20, act_mode="traj", task_mode="normal", step_y=0.05):
     gym.Wrapper.__init__(self, env)
     self.robot = self.env.robot
-    self.pybullet_client = self.env.pybullet_client
+    # self.pybullet_client = self.env.pybullet_client
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
     self.ETG_T2 = ETG_T2
@@ -254,62 +257,58 @@ class ETGWrapper(gym.Wrapper):
     self.act_mode = act_mode
     self.step_y = step_y
     self.task_mode = task_mode
-    self.ETG = ETG
+    # self.ETG = ETG
     phase = np.array([-np.pi / 2, 0])
-    if self.ETG:
-      self.ETG_agent = ETG_layer(self.ETG_T, self.env.env_time_step, self.ETG_H, 0.04, phase, 0.2, self.ETG_T2)
-      self.ETG_weight = 1
-      if len(ETG_path) > 1 and os.path.exists(ETG_path):
-        info = np.load(ETG_path)
-        self.ETG_w = info["w"]
-        self.ETG_b = info["b"]
-      else:
-        self.ETG_w = np.zeros((3, ETG_H))
-        self.ETG_b = np.zeros(3)
-      self.ETG_model = ETG_model(task_mode=self.task_mode, act_mode=act_mode, step_y=self.step_y)
-      self.last_ETG_act = np.zeros(12)
-      self.last_ETG_obs = np.zeros(self.ETG_H)
+
+    self.ETG_agent = ETG_layer(self.ETG_T, self.env.env_time_step, self.ETG_H, 0.04, phase, 0.2, self.ETG_T2)
+    self.ETG_weight = 1
+    if len(ETG_path) > 1 and os.path.exists(ETG_path):
+      info = np.load(ETG_path)
+      self.ETG_w = info["w"]
+      self.ETG_b = info["b"]
+    else:
+      self.ETG_w = np.zeros((3, ETG_H))
+      self.ETG_b = np.zeros(3)
+    self.ETG_model = ETG_model(task_mode=self.task_mode, act_mode=act_mode, step_y=self.step_y)
+    self.last_ETG_act = np.zeros(12)
+    self.last_ETG_obs = np.zeros(self.ETG_H)
 
   def reset(self, **kwargs):
     kwargs["info"] = True
     obs, info = self.env.reset(**kwargs)
-    if self.ETG:
-      if "ETG_w" in kwargs.keys() and kwargs["ETG_w"] is not None:
-        self.ETG_w = kwargs["ETG_w"]
-      if "ETG_b" in kwargs.keys() and kwargs["ETG_b"] is not None:
-        self.ETG_b = kwargs["ETG_b"]
-      self.ETG_agent.reset()
-      state = self.ETG_agent.update2(t=self.env.get_time_since_reset())
-      act_ref = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
-      act_ref = self.ETG_model.act_clip(act_ref, self.robot)
-      self.last_ETG_act = act_ref * self.ETG_weight
-      info["ETG_obs"] = state[0]
-      info["ETG_act"] = self.last_ETG_act
+    if "ETG_w" in kwargs.keys() and kwargs["ETG_w"] is not None:
+      self.ETG_w = kwargs["ETG_w"]
+    if "ETG_b" in kwargs.keys() and kwargs["ETG_b"] is not None:
+      self.ETG_b = kwargs["ETG_b"]
+    self.ETG_agent.reset()
+    t = self.env.get_time_since_reset()
+    state = self.ETG_agent.update2(t)
+    act_etg = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
+    act_ref = self.ETG_model.act_clip(act_etg, self.robot)
+    self.last_ETG_act = act_ref * self.ETG_weight
+
+    info["ETG_obs"] = state[0]
+    info["ETG_act"] = self.last_ETG_act
+    info["ETG_trj"] = act_etg + self.robot.GetDefaultBaseFootPosition().reshape(12, -1)
     return obs, info
 
   def step(self, action, **kwargs):
-    if self.ETG:
-      # residual_act(input) + ETG_act
-      action = np.asarray(action).reshape(-1) + self.last_ETG_act
-      # CPG-RBF, the output of the hidden neuron: V(t), [tuple:2(20x1)]
-      t = self.env.get_time_since_reset()
-      state = self.ETG_agent.update2(t)
-      # P(t) = W ∗ V(t) + b, W:[3x20], b:[3x1] The phase difference of TG is T/2.
-      act_ref = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
-      # local position in foot link's frame
-      action_before = act_ref
-      ### Use IK to compute the motor angles, act_ref = etg_act - init_act !
-      act_ref = self.ETG_model.act_clip(act_ref, self.robot)
-      self.last_ETG_act = act_ref * self.ETG_weight
-      obs, rew, done, info = self.env.step(action)
-      # if abs(t % 0.5) < 1e-5:
-      #   print('swing : 112233')
-      # if abs(t % 0.5 - 0.25) < 1e-5:
-      #   print('stance: 445566')
-      info["ETG_obs"] = state[0]
-      info["ETG_act"] = self.last_ETG_act
-    else:
-      obs, rew, done, info = self.env.step(action)
+    # residual_act(input) + ETG_act
+    action = np.asarray(action).reshape(-1) + self.last_ETG_act
+    # CPG-RBF, the output of the hidden neuron: V(t), [tuple:2(20x1)]
+    t = self.env.get_time_since_reset()
+    state = self.ETG_agent.update2(t)  # 2x(20x1), 0 and T/2 phase
+    # P(t) = W ∗ V(t) + b, W:[3x20], b:[3x1] The phase difference of TG is T/2.
+    # P(t) is the local position in foot link's frame
+    act_etg = self.ETG_model.forward(self.ETG_w, self.ETG_b, state)
+    ### Use IK to compute the motor angles, act_ref = etg_act - init_act !
+    act_ref = self.ETG_model.act_clip(act_etg, self.robot)
+    self.last_ETG_act = act_ref * self.ETG_weight
+
+    obs, rew, done, info = self.env.step(action)
+    info["ETG_obs"] = state[0]
+    info["ETG_act"] = self.last_ETG_act
+    info["ETG_trj"] = act_etg + self.robot.GetDefaultBaseFootPosition().reshape(12, -1)
     return obs, rew, done, info
 
 
@@ -326,9 +325,10 @@ class RewardShaping(gym.Wrapper):
     self.pybullet_client = self.env.pybullet_client
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
+    self._enable_render = self.env.rendering_enabled
     self.steps = 0
     self.yaw_init = 0.0
-    self.last_contacts = np.zeros(4)
+    self.last_contacts = np.ones(4)
     self.feet_air_time = np.zeros(4)
     self.last_action = np.zeros(12)
 
@@ -343,14 +343,17 @@ class RewardShaping(gym.Wrapper):
     base_pose = info["base_position"]
     self.last_base10 = np.tile(base_pose, (10, 1))
     self.feetpos_err = []
+    self.feettime_err = []
+    self.foothold = np.zeros((4,3))
     info["foot_position_world"] = copy(self.last_footposition)
     info["scene"] = "plane"
     if "d_yaw" in kwargs.keys():
       info["d_yaw"] = kwargs["d_yaw"]
     else:
       info["d_yaw"] = 0
-    if self.render:
+    if self._enable_render:
       self.line_id = self.draw_direction(info)
+    self.foot_draw_id = [-1, -1, -1, -1]
     # return obs, info
     return obs
 
@@ -374,9 +377,11 @@ class RewardShaping(gym.Wrapper):
     else:
       info["scene"] = "plane"
     info["vel"] = (np.array(info["base_position"]) - np.array(self.last_basepose)) / self.env.env_time_step
+    info["velx"] = info["base_velocity"][0]
     info["d_yaw"] = kwargs["d_yaw"] if "d_yaw" in kwargs.keys() else 0
     donef = kwargs["donef"] if "donef" in kwargs.keys() else False
     # info["foot_position_world"] = self.get_foot_world(info)
+    info["contact_nums"] = 0
     # get reward terms, stored in the "info"
     info = self.reward_shaping(obs, rew, done, info, action, donef)
     rewards = 0
@@ -387,13 +392,14 @@ class RewardShaping(gym.Wrapper):
       if key in info.keys():
         # print(key)
         rewards += info[key]
-    self.last_basepose = copy(info["base_position"])
-    self.last_contacts = copy(info["real_contact"])
+    self.last_basepose = np.array(info["base_position"])
+    self.last_contacts = np.array(info["real_contact"])
     self.last_base10[1:, :] = self.last_base10[:9, :]
     self.last_base10[0, :] = np.array(info["base_position"]).reshape(1, 3)
-    if self.render:
-      self.pybullet_client.removeUserDebugItem(self.line_id)
-      self.line_id = self.draw_direction(info)
+    if self._enable_render:
+      self.pybullet_client.removeAllUserDebugItems()
+      # self.pybullet_client.removeUserDebugItem(self.line_id)
+      # self.line_id = self.draw_direction(info)
       self.draw_footstep(info)
     return (obs, self.reward_p * rewards, done, info)  # reward_p: default 5.0
 
@@ -406,13 +412,14 @@ class RewardShaping(gym.Wrapper):
     k = 1.0
     info['rew_torso'] = self.reward_param['rew_torso'] * self.re_torso(info, last_basepose=last_basepose)  # base velocity
     info['rew_up'] = self.reward_param['rew_up'] * self.re_up(info) * k  # roll and pitch
+    info['rew_height'] = self.reward_param['rew_height'] * self.re_body_height(info)
     info['rew_feet_vel'] = self.reward_param['rew_feet_vel'] * self.re_feet_velocity(info, last_footposition=last_footposition)  # foot velocity
-    info['rew_feet_airtime'] = self.reward_param['rew_feet_airtime'] * self.re_feet_air_time(info)
+    info['rew_feet_airtime'] = self.reward_param['rew_feet_airtime'] * self.re_feet_airtime(info)
     info['rew_feet_pos'] = self.reward_param['rew_feet_pos'] * self.re_feet_position(info)
     info['rew_velx'] = self.reward_param['rew_velx'] * rew  # calculated in "SimpleForwardTask": current_base_pos[0] - last_base_pos[0]
     info['rew_actionrate'] = self.reward_param['rew_actionrate'] * self.re_action_rate(action, info)
     # discouraged terms
-    info['rew_tau'] = -self.reward_param['rew_tau'] * info["energy"] * k
+    info['rew_tau'] = -self.reward_param['rew_tau'] * info["transport_cost"] * k
     info['rew_badfoot'] = -self.reward_param['rew_badfoot'] * self.robot.GetBadFootContacts()
     lose_contact_num = np.sum(1.0 - np.array(info["real_contact"]))
     info['rew_footcontact'] = -self.reward_param['rew_footcontact'] * max(lose_contact_num - 2, 0)
@@ -420,7 +427,7 @@ class RewardShaping(gym.Wrapper):
 
   def draw_direction(self, info):
     pose = info["base_position"]
-    if self.render:
+    if self._enable_render:
       id = self.pybullet_client.addUserDebugLine(lineFromXYZ=[pose[0], pose[1], 0.6],
                                                  lineToXYZ=[pose[0] + np.cos(info['d_yaw']),
                                                             pose[1] + np.sin(info['d_yaw']), 0.6],
@@ -429,15 +436,26 @@ class RewardShaping(gym.Wrapper):
 
   def draw_footstep(self, info):
     color_list = [[1,1,0], [1,0,0], [0,0,1], [0,1,0]]
-    self.pybullet_client.removeAllUserDebugItems()
-    for i in range(self.last_contact_position.shape[0]):
-      contact_pos = self.last_contact_position[i] + [self.foot_dx, 0, 0]
-      if i % 2 == 1: y_pos = 0.135
-      else: y_pos = -0.135
-      z_pos = self.env.get_terrain_height(contact_pos[0], y_pos)
-      self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, y_pos, z_pos],
-                                            lineToXYZ=[contact_pos[0]+0.02, y_pos, z_pos],
-                                            lineColorRGB=color_list[i], lineWidth=20)
+    # base_position = np.array(info["base_position"])
+    # self.pybullet_client.removeAllUserDebugItems()
+    # for i in range(self.last_contact_position.shape[0]):
+    #   contact_pos = self.last_contact_position[i] + [self.foot_dx, 0, 0]
+    #   if i % 2 == 1: y_pos = base_position[1] + 0.135
+    #   else: y_pos = base_position[1] - 0.135
+    #   # y_pos = contact_pos[1]
+    #   z_pos = self.env.get_terrain_height(contact_pos[0], y_pos)
+    #   self.pybullet_client.addUserDebugLine(lineFromXYZ=[contact_pos[0]-0.02, y_pos, z_pos],
+    #                                         lineToXYZ=[contact_pos[0]+0.02, y_pos, z_pos],
+    #                                         lineColorRGB=color_list[i], lineWidth=20)
+    for i in range(self.foothold.shape[0]):
+      target_x = self.foothold[i][0]
+      target_y = self.foothold[i][1]
+      target_z = self.foothold[i][2]
+      # self.pybullet_client.removeUserDebugItem(self.foot_draw_id[i])
+      self.foot_draw_id[i] = self.pybullet_client.addUserDebugLine(
+        lineFromXYZ=[target_x - 0.02, target_y, target_z],
+        lineToXYZ=[target_x + 0.02, target_y, target_z],
+        lineColorRGB=color_list[i], lineWidth=20)
 
   def terminate(self, info):
     rot_mat = info["rot_mat"]
@@ -490,7 +508,7 @@ class RewardShaping(gym.Wrapper):
 
   def c_prec(self, v, t, m):
     # w = np.arctanh(np.sqrt(0.95)) / m  # 2.89 / m
-    w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m
+    w = np.sqrt(np.arctanh(0.95)) / m  # 1.35 / m  ???
     return np.tanh(np.power((v - t) * w, 2))
 
   def re_action_rate(self, action, info):
@@ -502,6 +520,12 @@ class RewardShaping(gym.Wrapper):
     r = np.sum(r, axis=0)
     self.last_action = new_action
     return 1 - self.c_prec(r, 0, 0.2)
+
+  def re_body_height(self, info):
+    base_position = np.array(info["base_position"])
+    world_z = self.env.get_terrain_height(base_position[0], base_position[1])
+    r = abs(base_position[2] - world_z - 0.35)
+    return 1 - self.c_prec(r, 0, 0.15)
 
   def re_feet_velocity(self, info, vd=[1, 0, 0], last_footposition=None):
     vd[0] = np.cos(info['d_yaw'])
@@ -534,46 +558,73 @@ class RewardShaping(gym.Wrapper):
       v_sum += min(r, 1.0 * r)
     return self.re_rot(info, v_sum)
 
-  def re_feet_air_time(self, info):
+  def re_feet_airtime(self, info, traj_period=0.4):
     # Reward long steps
     contact = np.array(copy(info["real_contact"]))
-    contact_filt = np.logical_or(contact, np.array(self.last_contacts))
-    first_contact = (self.feet_air_time > 0.) * contact_filt
+    # contact_filt = np.logical_or(contact, self.last_contacts)
+    # first_contact = (self.feet_air_time > 0.) * contact_filt
+    first_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), self.last_contacts)
+    lift_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), contact)
     self.feet_air_time += self.env.env_time_step
-    # if first_contact[0] == True:
-    #   print(self.feet_air_time)
-    rew_airtime = np.sum((self.feet_air_time - 0.25) * first_contact, axis=0)
-    self.feet_air_time *= ~contact_filt  # if last and current foot are both in air
+    rew_airtime = 0.0
+    for i in range(contact.shape[0]):
+      # Punishing long duration of behavior
+      if self.feet_air_time[i] % traj_period < 1e-5:
+        rew_airtime += -1.0
+      airtime_err = abs((self.feet_air_time[i] - traj_period / 2) * first_contact[i])
+      rew_airtime += -self.c_prec(airtime_err, 0, traj_period / 2)
+      if self._enable_render and first_contact[i]:
+        self.feettime_err.append(airtime_err)
+        print("{} feet{}_airtime: {:.2f}, avg_error: {:.3f}".format(
+          len(self.feettime_err), i, self.feet_air_time[i], np.mean(self.feettime_err)))
+      if lift_contact[i]:
+        self.feet_air_time[i] = 0
+    # self.feet_air_time *= ~contact_filt  # if last and current foot are both in air
     return rew_airtime
-  
+
+  # foot idx in base frame:
+  # --------
+  # * 1  0 *
+  # *      *
+  # * 3  2 *
+  # --------
   def re_feet_position(self, info):
+    color_list = [[1, 1, 0], [1, 0, 0], [0, 0, 1], [0, 1, 0]]
+    # self.pybullet_client.removeAllUserDebugItems()
     # reward target foot position
     contact = np.array(info["real_contact"])
     contact_position = np.array(info["foot_position_world"])
+    base_position = np.array(info["base_position"])
     lift_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), contact)
     first_contact = np.logical_xor(np.logical_or(self.last_contacts, contact), self.last_contacts)
-    first_contact = np.repeat(first_contact.reshape(-1,1), 3, axis=1)
-    feet_fly_length = (contact_position - self.last_contact_position) * first_contact
+    # first_contact = np.repeat(first_contact.reshape(-1,1), 3, axis=1)
+    # feet_fly_length = (contact_position - self.last_contact_position) * first_contact
     rew_feet_length = 0
-    for i in range(first_contact.shape[0]):
-      if first_contact[i][0] == True:
-        # feet_length_err = np.sum(np.sqrt(np.square(feet_fly_length[i] - np.array([0.3, 0.0, 0.0]))))
-        foot_x, foot_y, foot_z = contact_position[i][0], contact_position[i][1], contact_position[i][2]
-        world_z = self.env.get_terrain_height(foot_x, foot_y)
-        feet_length_err = np.sqrt(np.sum(np.square(
-          [feet_fly_length[i][0]-self.foot_dx, abs(foot_y)-0.135, foot_z-world_z])))
-        # rew_feet_length += feet_length_err
-        rew_feet_length += (1-self.c_prec(feet_length_err, 0, 0.1))
-        self.feetpos_err.append(feet_length_err)
-        # print("Average feetpos error: ", np.mean(self.feetpos_err))
-        # if i == 0:
-        #   print(feet_length_err)
+    for i in range(contact.shape[0]):
+      if lift_contact[i] == True:
+        foot_position = self.robot.GetDefaultBaseFootPosition()[i] + [self.foot_dx, 0.0, 0.0]
+        self.foothold[i] = self.robot.ComputeFootholdPositionInWorldFrame(foot_position)
+        self.foothold[i][2] = self.env.get_terrain_height(self.foothold[i][0], self.foothold[i][1])
+      elif first_contact[i] == True:
         self.last_contact_position[i] = contact_position[i]
-      # if lift_contact[i] == True:
-      #   self.last_contact_position[i] = contact_position[i]
-
-    # rew_feet_length = 1 - self.c_prec(rew_feet_length, 0, 0.1)  # positive reward
-    # rew_feet_length = -self.c_prec(rew_feet_length, 0, 0.1)  # negative penalty
+        foot_x, foot_y, foot_z = contact_position[i][0], contact_position[i][1], contact_position[i][2]
+        target_x = self.foothold[i][0]
+        target_y = self.foothold[i][1]
+        feet_x_err = target_x - foot_x
+        feet_y_err = target_y - foot_y
+        feet_length_err = np.sqrt(np.sum(np.square([feet_x_err, feet_y_err])))
+        # rew_feet_length += feet_length_err
+        rew_feet_length += (1-self.c_prec(feet_length_err, 0, 0.4))  # positive reward
+        info["contact_nums"] = 1
+        if self._enable_render:
+          self.feetpos_err.append(feet_length_err)
+          print("{} feetpos{} error: {:.3f}, avg: {:.3f}".format(
+            len(self.feetpos_err), i, feet_length_err, np.mean(self.feetpos_err)))
+          # self.pybullet_client.removeUserDebugItem(self.foot_draw_id[i])
+          # self.foot_draw_id[i] = self.pybullet_client.addUserDebugLine(
+          #   lineFromXYZ=[target_x - 0.02, target_y, world_z],
+          #   lineToXYZ=[target_x + 0.02, target_y, world_z],
+          #   lineColorRGB=color_list[i], lineWidth=20)
     return rew_feet_length
 
   def get_foot_world(self, info={}):
@@ -643,93 +694,9 @@ class RandomWrapper(gym.Wrapper):
                                             parentObjectUniqueId=self.robot.quadruped,
                                             parentLinkIndex=-1, lineColorRGB=[1, 0, 0])
 
-  def random_dynamics(self, info):
-    footfriction = 1
-    footfriction_normal = 0
-
-    basemass = self.robot.GetBaseMassesFromURDF()[0]
-    basemass_ratio_normal = 0
-
-    baseinertia = self.robot.GetBaseInertiasFromURDF()
-    baseinertia_ratio_normal = np.zeros(3)
-
-    legmass = self.robot.GetLegMassesFromURDF()
-    legmass_ratio_normal = np.zeros(3)
-
-    leginertia = self.robot.GetLegInertiasFromURDF()
-    leginertia_ratio_normal = np.zeros(3)
-
-    control_latency = 0
-    control_latency_normal = -1
-
-    joint_friction = 0.025
-    joint_friction_normal = [0]
-    joint_friction_vec = np.array([joint_friction] * 12)
-
-    spin_friction = 0.2
-    spin_friction_normal = 0
-
-    if "random_dynamics" in self.random_param.keys() and self.random_param["random_dynamics"]:
-      # friction
-      # footfriction = np.random.uniform(1,2.5)
-      # footfriction_normal = footfriction-1
-
-      # basemass
-      # basemass_ratio = np.random.uniform(0.8,1.2)
-      # basemass_ratio_normal = (basemass_ratio-1)/0.2
-      # basemass = basemass*basemass_ratio
-
-      # baseinertia
-      # baseinertia_ratio = np.random.uniform(0.8,1.2,3)
-      # baseinertia_ratio_normal = (baseinertia_ratio-1)/0.2
-      # baseinertia = baseinertia[0]
-      # baseinertia = [(baseinertia[0]*baseinertia_ratio[0],baseinertia[1]*baseinertia_ratio[1],baseinertia[2]*baseinertia_ratio[2])]
-
-      # legmass
-      # legmass_ratio = np.random.uniform(0.8,1.2,3)
-      # legmass_ratio_normal = (legmass_ratio-1)/0.2
-      # legmass = legmass*np.array([legmass_ratio[0],legmass_ratio[1],legmass_ratio[2]]*4)
-
-      # leginertia
-      # leginertia_ratio = np.random.uniform(0.8,1.2,3)
-      # leginertia_ratio_normal = (leginertia_ratio-1)/0.2
-      # leginertia_new = []
-      # for lg in leginertia:
-      #      leginertia_new.append(leginertia_ratio*lg)
-      # leginertia = copy(leginertia_new)
-
-      # #control_latency
-      control_latency = np.random.uniform(0.01, 0.02)
-      control_latency_normal = (control_latency - 0.01) / 0.01
-      print("latency:", control_latency)
-      # joint_friction
-      # joint_friction = np.random.random(1)*0.05
-      # joint_friction_normal = (joint_friction/0.05-0.5)*2
-      # joint_friction_vec = np.array([joint_friction]*12)
-
-      # spin_friction
-      # spin_friction = np.random.uniform(0,0.4)
-      # spin_friction_normal = (spin_friction-0.2)*5
-
-    dynamics_vec = np.concatenate(([footfriction_normal], [basemass_ratio_normal],
-                                   baseinertia_ratio_normal, legmass_ratio_normal,
-                                   leginertia_ratio_normal, [control_latency_normal],
-                                   joint_friction_normal, [spin_friction_normal]), axis=0)
-    self.robot.SetFootFriction(footfriction)
-    self.robot.SetBaseMasses([basemass])
-    self.robot.SetBaseInertias(baseinertia)
-    self.robot.SetLegMasses(legmass)
-    self.robot.SetLegInertias(leginertia)
-    self.robot.SetControlLatency(control_latency)
-    self.robot.SetJointFriction(joint_friction_vec)
-    self.robot.SetFootSpinFriction(spin_friction)
-    info['dynamics'] = dynamics_vec
-    return info
-
   def reset(self, **kwargs):
     # infos = self.random_dynamics({})
     obs, info = self.env.reset(**kwargs)
-    info['dynamics'] = np.array([info['latency'], info["footfriction"], info['basemass']])
     force_info = np.zeros(6)
     if "random_force" in self.random_param.keys() and self.random_param["random_force"]:
       self.pybullet_client.removeAllUserDebugItems()
